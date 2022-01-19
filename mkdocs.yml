@@ -1,0 +1,11 @@
+site_name: iacs_ipac_reader
+site_description: A reader plugin for read iacs/ipac images and export .rtdc files.
+site_author: Chenqi Zhang
+
+theme: readthedocs
+
+
+repo_url: https://github.com/zcqwh/iacs_ipac_reader
+
+pages:
+- Home: index.md
