@@ -3,3 +3,13 @@
 # See also: https://caremad.io/posts/2013/07/setup-vs-requirement/
 
 -e .
+h5py==3.5.0
+matplotlib==3.5.0
+napari==0.4.12
+napari_plugin_engine==0.2.0
+numpy==1.21.4
+opencv_contrib_python_headless==4.4.0.42
+PyQt5==5.15.6
+pytest==6.2.5
+QtPy==1.10.0
+setuptools==58.0.4

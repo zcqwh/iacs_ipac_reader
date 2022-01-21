@@ -1,8 +1,8 @@
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 
 
 
-from ._dock_widget import napari_experimental_provide_dock_widget, ExampleQWidget, example_magic_widget
+from ._dock_widget import napari_experimental_provide_dock_widget
 
