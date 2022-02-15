@@ -1,12 +1,17 @@
 import napari
 from napari_plugin_engine import napari_hook_implementation
-from qtpy.QtWidgets import QWidget, QMessageBox
-
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-import cv2, h5py, os, time
+import cv2, h5py, os, time, shutil, pickle, csv
 import numpy as np
-#import shutil
+import pandas as pd
+
+from .aid_cv2_dnn import*
+from .image_processing import get_masks_ipac,get_masks_iacs,tiled_2_list,get_boundingbox_features,get_brightness,get_contourfeatures,add_colormap,get_color,uint16_2_unit8,vstripes_removal,hstripes_removal
+from .ApplyRF import*
+from .background_program import*
+
+
 
 #Turn off error warning
 np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)  
@@ -55,10 +60,35 @@ class MyTable(QtWidgets.QTableWidget):
         super(MyTable, self).startDrag(supportedActions)
         self.drag_item = self.currentItem()
         self.drag_row = self.row(self.drag_item)
-        
-        
 
-class iacs_ipac_reader(QWidget):
+        
+class LineEdit(QtWidgets.QLineEdit):
+        def __init__( self, parent ):
+            super(LineEdit, self).__init__(parent)
+            self.setDragEnabled(True)
+
+        def dragEnterEvent( self, event ):
+            data = event.mimeData()
+            urls = data.urls()
+            if ( urls and urls[0].scheme() == 'file' ):
+                event.acceptProposedAction()
+
+        def dragMoveEvent( self, event ):
+            data = event.mimeData()
+            urls = data.urls()
+            if ( urls and urls[0].scheme() == 'file' ):
+                event.acceptProposedAction()
+
+        def dropEvent( self, event ):
+            data = event.mimeData()
+            urls = data.urls()
+            if ( urls and urls[0].scheme() == 'file' ):
+                # for some reason, this doubles up the intro slash
+                filepath = str(urls[0].path())[1:]
+                self.setText(filepath)
+
+
+class iacs_ipac_reader(QtWidgets.QWidget):
     
     def __init__(self, napari_viewer):
         super().__init__()
@@ -206,7 +236,7 @@ class iacs_ipac_reader(QWidget):
         icon.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","green.png")), QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.comboBox_ipac_cnt_color.addItem(icon, "")
         icon1 = QtGui.QIcon()
-        icon1.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","Aqua.png")), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon1.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","aqua.png")), QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.comboBox_ipac_cnt_color.addItem(icon1, "")
         icon2 = QtGui.QIcon()
         icon2.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","red.png")), QtGui.QIcon.Normal, QtGui.QIcon.Off)
@@ -458,42 +488,109 @@ class iacs_ipac_reader(QWidget):
         self.btn_iacs_stack.setObjectName("btn_iacs_stack")
         self.gridLayout_7.addWidget(self.splitter_iacs_btn, 5, 0, 1, 1)
         self.tabWidget.addTab(self.tab_iacs, "")
+        #self.gridLayout_4.addWidget(self.tabWidget, 0, 0, 1, 1)
+
+        self.tab_aid = QtWidgets.QWidget()
+        self.tab_aid.setObjectName("tab_aid")
+        self.gridLayout_9 = QtWidgets.QGridLayout(self.tab_aid)
+        self.gridLayout_9.setContentsMargins(6, 6, 6, 6)
+        self.gridLayout_9.setObjectName("gridLayout_9")
+        self.splitter_2 = QtWidgets.QSplitter(self.tab_aid)
+        self.splitter_2.setOrientation(QtCore.Qt.Vertical)
+        self.splitter_2.setChildrenCollapsible(False)
+        self.splitter_2.setObjectName("splitter_2")
+        self.groupBox_aid_files = QtWidgets.QGroupBox(self.splitter_2)
+        self.groupBox_aid_files.setObjectName("groupBox_aid_files")
+        self.gridLayout_8 = QtWidgets.QGridLayout(self.groupBox_aid_files)
+        self.gridLayout_8.setObjectName("gridLayout_8")
+        self.splitter = QtWidgets.QSplitter(self.groupBox_aid_files)
+        self.splitter.setOrientation(QtCore.Qt.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setObjectName("splitter")
+        self.btn_aid_load_model = QtWidgets.QPushButton(self.splitter)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.btn_aid_load_model.sizePolicy().hasHeightForWidth())
+        self.btn_aid_load_model.setSizePolicy(sizePolicy)
+        self.btn_aid_load_model.setMaximumSize(QtCore.QSize(100, 16777215))
+        self.btn_aid_load_model.setObjectName("btn_aid_load_model")
+        
+        
+        self.lineEdit_aid_model_path = LineEdit(self.splitter)
+        self.lineEdit_aid_model_path.setReadOnly(True)
+        #self.lineEdit_aid_model_path.setEnabled(False)
+        self.lineEdit_aid_model_path.setDragEnabled(True)
+        self.lineEdit_aid_model_path.setObjectName("lineEdit_aid_model_path")
+        
+        self.gridLayout_8.addWidget(self.splitter, 1, 0, 1, 2)
+        self.btn_aid_classify = QtWidgets.QPushButton(self.groupBox_aid_files)
+        self.btn_aid_classify.setObjectName("btn_aid_classify")
+        self.gridLayout_8.addWidget(self.btn_aid_classify, 2, 0, 1, 2)
+        ##### Manually change ####
+        self.table_aid_files = MyTable(0,4,self.groupBox_aid_files)
+        self.table_aid_files.setObjectName("table_aid_files")
+        self.gridLayout_8.addWidget(self.table_aid_files, 0, 0, 1, 2)
+        self.groupBox_aid_analy = QtWidgets.QGroupBox(self.splitter_2)
+        self.groupBox_aid_analy.setObjectName("groupBox_aid_analy")
+        self.gridLayout_25 = QtWidgets.QGridLayout(self.groupBox_aid_analy)
+        self.gridLayout_25.setObjectName("gridLayout_25")
+        
+        ##### Manually change ####
+        self.table_aid_analy = MyTable(0,5,self.groupBox_aid_analy)
+        self.table_aid_analy.setEnabled(True)
+        self.table_aid_analy.setObjectName("table_aid_analy")
+        self.gridLayout_25.addWidget(self.table_aid_analy, 0, 0, 1, 1)
+        
+        self.groupBox_dise_class = QtWidgets.QGroupBox(self.splitter_2)
+        self.groupBox_dise_class.setObjectName("groupBox_dise_class")
+        self.gridLayout_10 = QtWidgets.QGridLayout(self.groupBox_dise_class)
+        self.gridLayout_10.setObjectName("gridLayout_10")
+        self.table_dise_class = MyTable(0,2, self.groupBox_dise_class)
+        self.table_dise_class.setObjectName("table_dise_class")
+        self.gridLayout_10.addWidget(self.table_dise_class, 0, 0, 1, 1)
+        
+        self.gridLayout_9.addWidget(self.splitter_2, 0, 0, 1, 1)
+        self.btn_aid_add_rtdc = QtWidgets.QPushButton(self.tab_aid)
+        self.btn_aid_add_rtdc.setObjectName("btn_aid_add_rtdc")
+        self.gridLayout_9.addWidget(self.btn_aid_add_rtdc, 1, 0, 1, 1)
+        self.tabWidget.addTab(self.tab_aid, "")
         self.gridLayout_4.addWidget(self.tabWidget, 0, 0, 1, 1)
 
+
         self.retranslateUi(Form)
-        self.tabWidget.setCurrentIndex(1)
+        self.tabWidget.setCurrentIndex(2)
         QtCore.QMetaObject.connectSlotsByName(Form)
         
         
         self.doubleSpinBox_ipac_noise.valueChanged['double'].connect(lambda item: self.Slider_ipac_noise.setValue(int(item)))
         self.Slider_ipac_noise.valueChanged['int'].connect(lambda item: self.doubleSpinBox_ipac_noise.setValue(float(item)))        
-        
         self.checkBox_ipac_cl.stateChanged.connect(lambda:self.chk_statues(self.spinBox_ipac_cl_min))
         self.checkBox_ipac_cl.stateChanged.connect(lambda:self.chk_statues(self.spinBox_ipac_cl_max))
         self.checkBox_ipac_ca.stateChanged.connect(lambda:self.chk_statues(self.spinBox_ipac_ca_min))
         self.checkBox_ipac_ca.stateChanged.connect(lambda:self.chk_statues(self.spinBox_ipac_ca_max))
         self.checkBox_ipac_cn.stateChanged.connect(lambda:self.chk_statues(self.spinBox_ipac_cn))
-        
         self.checkBox_ipac_contour.stateChanged.connect(lambda:self.chk_statues(self.comboBox_ipac_cnt_color))
         self.checkBox_ipac_index.stateChanged.connect(lambda:self.chk_statues(self.comboBox_ipac_ind_color))
-        
         self.btn_ipac_stack.clicked.connect(self.export_stack_ipac)
         self.btn_ipac_save.clicked.connect(self.ipac_save_rtdc)
-        
         self.checkBox_iacs_cl.stateChanged.connect(lambda:self.chk_statues(self.spinBox_iacs_cl_min))
         self.checkBox_iacs_cl.stateChanged.connect(lambda:self.chk_statues(self.spinBox_iacs_cl_max))
         self.checkBox_iacs_ca.stateChanged.connect(lambda:self.chk_statues(self.spinBox_iacs_ca_min))
         self.checkBox_iacs_ca.stateChanged.connect(lambda:self.chk_statues(self.spinBox_iacs_ca_max))
         self.checkBox_iacs_cn.stateChanged.connect(lambda:self.chk_statues(self.spinBox_iacs_cn))
-        
         self.checkBox_iacs_contour.stateChanged.connect(lambda:self.chk_statues(self.comboBox_iacs_cnt_color))
         self.checkBox_iacs_index.stateChanged.connect(lambda:self.chk_statues(self.comboBox_iacs_ind_color))
-
         self.btn_iacs_tiles.clicked.connect(self.export_tiles)
         self.btn_iacs_stack.clicked.connect(self.export_stack)
         self.btn_iacs_save.clicked.connect(self.iacs_save_rtdc)
+        self.btn_aid_classify.clicked.connect(self.run_classify)
+        self.btn_aid_load_model.clicked.connect(self.aid_load_model)
+        self.btn_aid_add_rtdc.clicked.connect(self.aid_add_rtdc)
         
-
+# =============================================================================
+#         table_ipac
+# =============================================================================
         self.table_ipac.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
         header_labels = ["TF", "Load", "File Path" , "Shape", "Del"]
         self.table_ipac.setHorizontalHeaderLabels(header_labels) 
@@ -504,12 +601,15 @@ class iacs_ipac_reader(QWidget):
             #header.setSectionResizeMode(i,QtWidgets.QHeaderView.Stretch)
         header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
         
-
         self.table_ipac.setAcceptDrops(True)
         self.table_ipac.setDragEnabled(True)
+        
         self.table_ipac.dropped.connect(self.dataDropped_ipac)
+        self.table_ipac.horizontalHeader().sectionClicked.connect(self.select_all)
         
-        
+# =============================================================================
+#         table_iacs
+# =============================================================================
         self.table_iacs.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
         header_labels = ["TF", "Load", "File Path" , "Shape", "Del"]
         self.table_iacs.setHorizontalHeaderLabels(header_labels) 
@@ -522,15 +622,57 @@ class iacs_ipac_reader(QWidget):
         
         self.table_iacs.setAcceptDrops(True)
         self.table_iacs.setDragEnabled(True)
-        self.table_iacs.dropped.connect(self.dataDropped_iacs)
         
+        self.table_iacs.dropped.connect(self.dataDropped_iacs)
         self.table_iacs.horizontalHeader().sectionClicked.connect(self.select_all)
-        self.table_ipac.horizontalHeader().sectionClicked.connect(self.select_all)
+        
+# =============================================================================
+#         table_aid_files
+# =============================================================================
+        self.table_aid_files.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
+        header_labels = ["TF", "Load", "File Path" , "Del"]
+        self.table_aid_files.setHorizontalHeaderLabels(header_labels) 
+        header = self.table_aid_files.horizontalHeader()
+        for i in [0,1,3]:
+            header.setSectionResizeMode(i,QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+
+        self.table_aid_files.setAcceptDrops(True)
+        self.table_aid_files.setDragEnabled(True)
+        self.table_aid_files.dropped.connect(self.dataDropped_aid)
+        
+        
+        self.table_aid_files.horizontalHeader().sectionClicked.connect(self.select_all_aid)
+        
+# =============================================================================
+#       table_aid_analy
+# =============================================================================
+        self.table_aid_analy.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
+        header_labels = ["Load","Class", "Name", "Nr.events" , "% of events"]
+        self.table_aid_analy.setHorizontalHeaderLabels(header_labels) 
+        header = self.table_aid_analy.horizontalHeader()
+        for i in [0,1,3,4]:
+            header.setSectionResizeMode(i, QtWidgets.QHeaderView.ResizeToContents)
+        for i in [2]:
+            header.setSectionResizeMode(i, QtWidgets.QHeaderView.Stretch)
+        
+        self.table_aid_analy.horizontalHeader().sectionClicked.connect(self.send_to_napari_all_class)
+
+# =============================================================================
+#     table_dise_class
+# =============================================================================
+        self.table_dise_class.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
+        header_labels = ["Disease","Probability"]
+        self.table_dise_class.setHorizontalHeaderLabels(header_labels)
+        header = self.table_dise_class.horizontalHeader()
+        for i in [0,1]:
+            header.setSectionResizeMode(i, QtWidgets.QHeaderView.Stretch)
+        
 
     def retranslateUi(self, Form):
         _translate = QtCore.QCoreApplication.translate
         Form.setWindowTitle(_translate("Form", "Form"))
-        self.groupBox_ipac.setTitle(_translate("Form", "files table"))
+        self.groupBox_ipac.setTitle(_translate("Form", "Files table"))
         self.label_ipac_pixel.setText(_translate("Form", "Pixel size"))
         self.groupBox_ipac_thresh.setTitle(_translate("Form", "Maunal threshold"))
         self.label_ipac_noise.setText(_translate("Form", "Noisel level"))
@@ -553,10 +695,10 @@ class iacs_ipac_reader(QWidget):
         self.comboBox_ipac_ind_color.setItemText(2, _translate("Form", "Green"))
         self.comboBox_ipac_ind_color.setItemText(3, _translate("Form", "Red"))
         self.comboBox_ipac_ind_color.setItemText(4, _translate("Form", "Aqua"))
-        self.btn_ipac_save.setText(_translate("Form", "Save as"))
+        self.btn_ipac_save.setText(_translate("Form", "Save .rtdc"))
         self.btn_ipac_stack.setText(_translate("Form", "Preview stack"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_ipac), _translate("Form", "iPAC"))
-        self.groupBox_iacs.setTitle(_translate("Form", "files table"))
+        self.groupBox_iacs.setTitle(_translate("Form", "Files table"))
         self.label.setText(_translate("Form", "Number of channels"))
         self.groupBox_colormap.setTitle(_translate("Form", "Colormap"))
         self.label_channel0.setText(_translate("Form", "Channel 0"))
@@ -587,10 +729,21 @@ class iacs_ipac_reader(QWidget):
         self.comboBox_iacs_cnt_color.setItemText(2, _translate("Form", "Red"))
         self.comboBox_iacs_cnt_color.setItemText(3, _translate("Form", "Black"))
         self.comboBox_iacs_cnt_color.setItemText(4, _translate("Form", "White"))
-        self.btn_iacs_save.setText(_translate("Form", "Save as"))
+        self.btn_iacs_save.setText(_translate("Form", "Save .rtdc"))
         self.btn_iacs_tiles.setText(_translate("Form", "Preview tiles"))
         self.btn_iacs_stack.setText(_translate("Form", "Preview stack"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_iacs), _translate("Form", "IACS"))
+        
+        self.table_aid_files.setToolTip(_translate("Form", "Drag and drop .rtdc or .bin files here."))
+        self.lineEdit_aid_model_path.setToolTip(_translate("Form", "Drag and drop the model folder containing the .pb file and meta.xlsx file here."))
+        self.groupBox_aid_files.setTitle(_translate("Form", "Files table"))
+        self.btn_aid_load_model.setText(_translate("Form", "Choose model"))
+        self.btn_aid_load_model.setToolTip(_translate("Form", "Choose the model folder containing the .pb file and meta.xlsx file."))
+        self.btn_aid_classify.setText(_translate("Form", "Classify"))
+        self.groupBox_aid_analy.setTitle(_translate("Form", "Phenotype classification"))
+        self.groupBox_dise_class.setTitle(_translate("Form", "Disease classification"))
+        self.btn_aid_add_rtdc.setText(_translate("Form", "Add classification to .rtdc file"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_aid), _translate("Form", "AID classif."))
 
 
     def chk_statues(self, spinbox):
@@ -599,60 +752,6 @@ class iacs_ipac_reader(QWidget):
         else:
             spinbox.setEnabled(False)
 
-    def uint16_2_unit8(self, image):
-        """
-        This function converts an image from unit16 into uint8
-        The function cv2.convertScaleAbs is NOT used as the result did not look 
-        good when testing on some images
-        Instead, the iamge is divided by the maximum and *255 
-
-        Parameters
-        ----------
-        image : np.array of dimension (w,h)
-            the image in unit16.
-
-        Returns
-        -------
-        image, converted into unit8.
-
-        """
-        image = image.astype(np.float32) #for conversion to unit8, first make it float (float16 is sufficient)
-        factor = 255/image.max()
-        image = np.multiply(image, factor)
-
-        return image.astype(np.uint8),factor
-    
-    def vstripes_removal(self, image):
-
-        bg = np.r_[image[0:5,:],image[-5:,:]]
-        bg = cv2.reduce(bg, 0, cv2.REDUCE_AVG)
-        bg = np.tile(bg,(100,1))
-        
-        return cv2.subtract(image,bg)
-    
-    def hstripes_removal(self, image):
-        """
-        Backgound shows vertical stripes
-        Get this pattern using top and bottom 5 pixels
-        and remove that from original image
-        """
-        ##Background finding
-        #get a slice of 88x5pix at top and bottom of image
-        #and put both stripes in one array
-        bg = np.c_[image[:,0:10],image[:,-10:]]
-
-        #vertical mean
-        bg = cv2.reduce(bg, 1, cv2.REDUCE_AVG)
-        #stack to get it back to 100x88 pixel image
-        bg = np.tile(bg,(1,image.shape[1]))
-        #remove the background
-        subtr = image.astype(np.int)-bg.astype(np.int) #after that, the background is approx 0
-        
-        subtr_abs = abs(subtr).astype(np.uint8) #absolute. Neccessary for contour finding
-        
-        subtr = subtr+128 #add 255/2 to the whole image. Now, the background has that brightness    
-        subtr = subtr.astype(np.uint8)
-        return cv2.subtract(image,bg) #subtr,subtr_abs
 
     def select_all(self,col):
         """
@@ -682,9 +781,9 @@ class iacs_ipac_reader(QWidget):
         if col == 4: #delete all
             for i in range(parent.rowCount()):
                 parent.removeRow(0)
-                
         else:
             return
+        
   
     def delete_item(self,item):
         """
@@ -696,6 +795,7 @@ class iacs_ipac_reader(QWidget):
         index = table.indexAt(buttonClicked.pos())
         rowPosition = index.row()
         table.removeRow(rowPosition) #remove table item
+
 
     def select_layers(self):
         "select all raw date layer"
@@ -713,7 +813,7 @@ class iacs_ipac_reader(QWidget):
                 
         
 # =============================================================================
-# Class IACS
+# IACS
 # =============================================================================
 
     def dataDropped_iacs(self, l):
@@ -721,7 +821,6 @@ class iacs_ipac_reader(QWidget):
         #Iterate over l and check if it is a folder or a file (directory)    
         isfile = [os.path.isfile(str(url)) for url in l]
         isfolder = [os.path.isdir(str(url)) for url in l]
-
 
         #####################For folders with images:##########################            
         #where are folders?
@@ -807,47 +906,11 @@ class iacs_ipac_reader(QWidget):
             btn_delete.setMaximumSize(QtCore.QSize(100, 100))
             icon_path = os.path.join(dir_root,"art","delete.png")
             #print("icon_path:", icon_path)
-            btn_delete.setIcon(QtGui.QIcon(str(icon_path)))
+            btn_delete.setIcon(QtGui.QIcon("/Users/nana/iacs_ipac_reader/src/iacs_ipac_reader/art/delete.png"))
             self.table_iacs.setCellWidget(rowPosition, columnPosition, btn_delete) 
             self.table_iacs.resizeRowsToContents()
             btn_delete.clicked.connect(self.delete_item)
         
-
-    def add_colormap(self, img, color):
-        """
-        
-
-        Parameters
-        ----------
-        img : TYPE
-            DESCRIPTION.
-        color : str
-            "Red","Green","Aqua"
-
-        Returns
-        -------
-        TYPE
-            image with colormap
-
-        """
-        if len(img.shape) == 2: #grayscale or RGB
-            img = cv2.merge((img.copy(),img.copy(),img.copy()))
-        
-        lut = np.zeros((256, 1, 3), dtype=np.uint8)
-        if color == "Red":
-            lut[:,0,0] = np.arange(256, dtype = np.dtype('uint8')) # 0:red,1:green,3:blue
-        if color == "Green": 
-            lut[:,0,1] = np.arange(256, dtype = np.dtype('uint8')) # 0:red,1:green,3:blue
-        if color == "Aqua":
-            lut[:,0,1] = np.arange(256, dtype = np.dtype('uint8')) # 0:red,1:green,3:blue
-            lut[:,0,2] = np.arange(256, dtype = np.dtype('uint8')) # 0:red,1:green,3:blue
-        return cv2.LUT(img,lut)
-    
-    
-    def get_color(self,color_index):
-        dic = {"Aqua":(0,255,255,255),"Green":(0,255,0,255),"Red":(255,0,0,255),"White":(255,255,255,255),"Black":(0,0,0,255)}
-        return dic[color_index]
-    
     
     def send_to_napari_iacs(self,item):
         buttonClicked = self.sender()
@@ -856,58 +919,11 @@ class iacs_ipac_reader(QWidget):
     
         path_image = self.table_iacs.item(rowPosition, 2).text()
         image = cv2.imread(path_image,-1)
-        image,_ = self.uint16_2_unit8(image)
+        image,_ = uint16_2_unit8(image)
         name = os.path.basename(path_image)
             
         new_layer = self.viewer.add_image(image,name=name)
 
-     
-  
-    def get_masks_iacs(self, img, filter_len, len_min, len_max, filter_area, area_min, area_max, filter_n, nr_contours):
-        img = cv2.medianBlur(img,3)
-        _, thresh_img = cv2.threshold(img, 0, 255, cv2.THRESH_OTSU)
-        contours, _ = cv2.findContours(thresh_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        #contours = contours.sort(key=len,reverse=True) ####only return None
-        contours = sorted(contours, key = len,reverse=True)
-        
-        if filter_len and not filter_area:
-            cnt_lenghts = np.array([len(cnt) for cnt in contours])
-            ind = np.where( (cnt_lenghts>len_min) & (cnt_lenghts<len_max) )[0]
-            contours = list(np.array(contours)[ind])
-            
-        if filter_area and not filter_len :
-            cnt_area = [cv2.contourArea(cnt) for cnt in contours]
-            ind = np.where( (cnt_area[0]>area_min) & (cnt_area[0]<area_max) )[0]        
-            #print("ind:", ind)
-            contours = list(np.array(contours)[ind])
-            
-        if filter_len and filter_area:
-            cnt_lenghts = np.array([len(cnt) for cnt in contours])
-            cnt_area = [cv2.contourArea(cnt) for cnt in contours]
-            ind = np.where( (cnt_area[0]>area_min) & (cnt_area[0]<area_max) 
-                           & (cnt_lenghts>len_min) & (cnt_lenghts<len_max))[0]  
-            contours = list(np.array(contours)[ind])
-        
-        if len(contours) == 0: #if no conotur was found
-            return [],[np.nan] #return nan -> omit sorting
-        
-        if filter_n:
-            # contours = list(np.array(contours)[ind])
-            iterations = min(len(contours),nr_contours)
-            contours = contours[0:iterations]
-        else:
-            iterations = len(contours)
-            
-            
-        masks = []
-        for it in range(iterations):
-            mask = np.zeros_like(img)
-            cv2.drawContours(mask,contours,it,1,cv2.FILLED)# produce a contour with filled inside
-            masks.append(mask)
-        
-        return contours,masks    
-
-    
     
     def read_image_iacs_1ch(self,layer):
 # =============================================================================
@@ -921,18 +937,18 @@ class iacs_ipac_reader(QWidget):
         area_max = self.spinBox_iacs_ca_max.value()
         filter_n = self.checkBox_iacs_cn.isChecked()
         nr_contours = self.spinBox_iacs_cn.value()
-        cnt_color = self.get_color(self.comboBox_iacs_cnt_color.currentText())
-        ind_color = self.get_color(self.comboBox_iacs_ind_color.currentText())
+        cnt_color = get_color(self.comboBox_iacs_cnt_color.currentText())
+        ind_color = get_color(self.comboBox_iacs_ind_color.currentText())
 # ============================================================================
         image = layer.data
-        img_list = self.tiled_2_list(image)
+        img_list = tiled_2_list(image)
         contours_images_list = []
         for index in range(len(img_list)):
             img = img_list[index]
-            img, factor = self.uint16_2_unit8(img)
-            img = self.vstripes_removal(img)
+            img, factor = uint16_2_unit8(img)
+            img = vstripes_removal(img)
 
-            contours_,masks_ = self.get_masks_iacs(img, filter_len, len_min, len_max, 
+            contours_,masks_ = get_masks_iacs(img, filter_len, len_min, len_max, 
                                                    filter_area, area_min, area_max, 
                                                    filter_n, nr_contours)
             
@@ -977,17 +993,17 @@ class iacs_ipac_reader(QWidget):
         area_max = self.spinBox_iacs_ca_max.value()
         filter_n = self.checkBox_iacs_cn.isChecked()
         nr_contours = self.spinBox_iacs_cn.value()
-        cnt_color = self.get_color(self.comboBox_iacs_cnt_color.currentText())
-        ind_color = self.get_color(self.comboBox_iacs_ind_color.currentText())
+        cnt_color = get_color(self.comboBox_iacs_cnt_color.currentText())
+        ind_color = get_color(self.comboBox_iacs_ind_color.currentText())
         
         ch0_color = self.comboBox_iacs_ch0.currentText()
         ch1_color = self.comboBox_iacs_ch1.currentText()
 # =============================================================================
 
         tiled_img_ch0 = layer_ch0.data
-        images_ch0 = self.tiled_2_list(tiled_img_ch0)
+        images_ch0 = tiled_2_list(tiled_img_ch0)
         tiled_img_ch1 = layer_ch1.data
-        images_ch1 = self.tiled_2_list(tiled_img_ch1)
+        images_ch1 = tiled_2_list(tiled_img_ch1)
         
         contours_images_list = []
         colormap_images_list = []
@@ -995,13 +1011,13 @@ class iacs_ipac_reader(QWidget):
             image_ch0 = images_ch0[i]
             image_ch1 = images_ch1[i]
             
-            image_ch0,factor0 = self.uint16_2_unit8(image_ch0) 
-            image_ch1,factor1 = self.uint16_2_unit8(image_ch1) 
-            image_ch0 = self.vstripes_removal(image_ch0)
-            image_ch1 = self.vstripes_removal(image_ch1)
+            image_ch0,factor0 = uint16_2_unit8(image_ch0) 
+            image_ch1,factor1 = uint16_2_unit8(image_ch1) 
+            image_ch0 = vstripes_removal(image_ch0)
+            image_ch1 = vstripes_removal(image_ch1)
 
             img_sup = cv2.add(image_ch0,image_ch1)
-            contours_,masks_ = self.get_masks_iacs(img_sup, filter_len, len_min, len_max, 
+            contours_,masks_ = get_masks_iacs(img_sup, filter_len, len_min, len_max, 
                                                    filter_area, area_min, area_max, 
                                                    filter_n, nr_contours)
             
@@ -1017,8 +1033,8 @@ class iacs_ipac_reader(QWidget):
             contours_images_list.append(trans_mask)
             
             if self.groupBox_colormap.isChecked():
-                image_ch0_color = self.add_colormap(image_ch0,ch0_color)
-                image_ch1_color = self.add_colormap(image_ch1,ch1_color)
+                image_ch0_color = add_colormap(image_ch0,ch0_color)
+                image_ch1_color = add_colormap(image_ch1,ch1_color)
                 img_sup = cv2.add(image_ch0_color,image_ch1_color)
             
             colormap_images_list.append(img_sup)
@@ -1102,10 +1118,492 @@ class iacs_ipac_reader(QWidget):
                     self.viewer.add_image(tiles_colormap, name = index+"_color_tiles") 
                     self.viewer.add_image(tiles_cnt, name = index+"_cnt_tiles") 
                     
+    def iacs_save_rtdc(self):
+        n_channel = self.spinBox_n_channel.value()
+        if n_channel == 1:
+            self.iacs_save_rtdc_1ch()
+        if n_channel == 2:
+            self.iacs_save_rtdc_2ch()
+    
+    
+    def iacs_save_rtdc_1ch(self):
+        
+        ###############Parameters##########################
+        filter_len = self.checkBox_iacs_cl.isChecked()
+        len_min = self.spinBox_iacs_ca_min.value()
+        len_max = self.spinBox_iacs_cl_max.value()
+    
+        filter_area = self.checkBox_iacs_ca.isChecked()
+        area_min = self.spinBox_iacs_ca_min.value()
+        area_max = self.spinBox_iacs_ca_max.value()
+        
+        filter_n = self.checkBox_iacs_cn.isChecked()
+        nr_contours = self.spinBox_iacs_cn.value()
+        
+        pixel_size = self.SpinBox_iacs_pixel.value()
+        ###############Parameters##########################
+        
+        rowPosition = self.table_iacs.rowCount()
+        ch0_paths = []
+        save_paths = []
+        
+        for i in range(rowPosition):
+            path = self.table_iacs.item(i, 2).text()
+            path_target = os.path.dirname(path) + os.sep + os.path.basename(path).split(".png")[0] + ".rtdc" #filename of resulting file
+            save_paths.append(path_target)
+            ch0_paths.append(path)
+            
+            #check if the file that should be written may already exists (e.g. after runnig script twice)
+            
+            if os.path.isfile(path_target):
+                print("Following file already exists and will be overwritten: "+path_target)
+                #delete the file
+                os.remove(path_target)
+            
+            #Initialize lists for all properties
+            #images_ch1_save, factor_ch1,
+            folder_names,index_orig,images_ch0_save,masks,contours,\
+            pos_x,pos_y,size_x,size_y,\
+            bright_avg,bright_sd,factor_ch0,\
+            area_um,area_orig,area_hull,\
+            area_ratio,circularity,inert_ratio_raw = \
+            [],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]#,[],[]
+            
+            t1 = time.time()
+            #get all images from a large tiled image
+            images_ch0 = []
+            
+            for index in range(len(ch0_paths)):
+                ch0_path = ch0_paths[index]
+            
+                img_ch0 = cv2.imread(ch0_path,-1) #Load one big (tiled) image
+                img_ch0 = tiled_2_list(img_ch0) #separate tiled img into individual images
+                images_ch0.append(img_ch0)
+            
+            images_ch0 = np.concatenate(images_ch0)
+            images_ch0 = list(images_ch0)
+            
+            ###############Parameters##########################
+            filter_len = self.checkBox_iacs_cl.isChecked()
+            len_min = self.spinBox_iacs_ca_min.value()
+            len_max = self.spinBox_iacs_cl_max.value()
+        
+            filter_area = self.checkBox_iacs_ca.isChecked()
+            area_min = self.spinBox_iacs_ca_min.value()
+            area_max = self.spinBox_iacs_ca_max.value()
+            
+            filter_n = self.checkBox_iacs_cn.isChecked()
+            nr_contours = self.spinBox_iacs_cn.value()
+            
+            pixel_size = self.SpinBox_iacs_pixel.value()
+            ###############Parameters##########################
+            
+            
+            for index in range(len(images_ch0)):
+                img_ch0 = images_ch0[index]
+                img_ch0,factor0 = uint16_2_unit8(img_ch0)
+                img_ch0_bg_removed = vstripes_removal(img_ch0)
+                contours_,masks_ = get_masks_iacs(img_ch0_bg_removed, filter_len, len_min, len_max, 
+                                                       filter_area, area_min, area_max, 
+                                                       filter_n, nr_contours)
+                
+                
+                for contour,mask in zip(contours_,masks_):
+                    output = get_boundingbox_features(img_ch0,contour,pixel_size)
+            
+                    if type(contour)!=np.ndarray or np.isnan(output[0]) or np.isnan(output[1]):
+                        folder_names.append(ch0_path)
+                        index_orig.append(index)
+                        images_ch0_save.append(np.zeros(shape=img_ch0.shape))
+                        masks.append(np.zeros(shape=img_ch0.shape))
+                        contours.append(np.nan)
+                        factor_ch0.append(np.nan)
+                        pos_x.append(np.nan)
+                        pos_y.append(np.nan)
+                        size_x.append(np.nan)
+                        size_y.append(np.nan)
+                        bright_avg.append(np.nan)
+                        bright_sd.append(np.nan)
+                        area_orig.append(np.nan)
+                        area_hull.append(np.nan)
+                        area_um.append(np.nan)
+                        area_ratio.append(np.nan)
+                        circularity.append(np.nan)
+                        inert_ratio_raw.append(np.nan)
+            
+                    else:
+                        folder_names.append(ch0_path)
+                        index_orig.append(index)
+                        images_ch0_save.append(img_ch0)
+                        masks.append(mask)
+                        contours.append(contour)
+                        factor_ch0.append(factor0)
+                        pos_x.append(output[0])
+                        pos_y.append(output[1])
+                        size_x.append(output[2])
+                        size_y.append(output[3])
+                        output = get_brightness(img_ch0,mask)
+                        bright_avg.append(output["bright_avg"]/factor0)
+                        bright_sd.append(output["bright_sd"]/factor0)
+                        
+                        output = get_contourfeatures(contour, pixel_size)
+                        area_orig.append(output["area_orig"])
+                        area_hull.append(output["area_hull"])
+                        area_um.append(output["area_um"])
+                        area_ratio.append(output["area_ratio"])
+                        circularity.append(output["circularity"])
+                        inert_ratio_raw.append(output["inert_ratio_raw"])
+            
+            t2 = time.time()
+            dt = t2-t1
+            print("Required time to compute features: " +str(np.round(dt,2) )+"s ("+str(np.round(dt/len(images_ch0_save)*1000,2) )+"ms per cell)")
+            
+            
+            #remove events where no contours were found (pos_x and pos_y is nan)
+            ind_nan = np.isnan(pos_x)
+            ind_nan = np.where(ind_nan==False)[0]
+            if len(ind_nan)>0:
+                index_orig = list(np.array(index_orig)[ind_nan])
+                pos_x = list(np.array(pos_x)[ind_nan])
+                pos_y = list(np.array(pos_y)[ind_nan])
+                images_ch0_save = list(np.array(images_ch0_save)[ind_nan])
+                masks = list(np.array(masks)[ind_nan])
+                contours = list(np.array(contours)[ind_nan])
+                factor_ch0 = list(np.array(factor_ch0)[ind_nan])
+                bright_avg = list(np.array(bright_avg)[ind_nan])
+                bright_sd = list(np.array(bright_sd)[ind_nan])
+                area_orig = list(np.array(area_orig)[ind_nan])
+                area_hull = list(np.array(area_hull)[ind_nan])
+                area_um = list(np.array(area_um)[ind_nan])
+                area_ratio = list(np.array(area_ratio)[ind_nan])
+                circularity = list(np.array(circularity)[ind_nan])
+                inert_ratio_raw = list(np.array(inert_ratio_raw)[ind_nan])
+                
+                #Save images and corresponding pos_x and pos_y to an hdf5 file for AIDeveloper
+                images_ch0_save = np.r_[images_ch0_save].astype(np.uint8)
+                #images_ch1_save = np.r_[images_ch1_save].astype(np.uint8)
+                masks = (np.r_[masks]*255).astype(np.uint8)
+            
+            
+                maxshape_1channel = (None, images_ch0_save.shape[1], images_ch0_save.shape[2])
+                maxshape_mask = (None, masks.shape[1], masks.shape[2])
+                
+                #Create hdf5 dataset
+                hdf = h5py.File(path_target,'a')
+                #events = hdf.require_group("events")
+            
+                dset = hdf.create_dataset("events/image", data=images_ch0_save, dtype=np.uint8,maxshape=maxshape_1channel,fletcher32=True,chunks=True)
+                dset.attrs.create('CLASS', np.string_('IMAGE'))
+                dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
+                dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
+            
+                dset.attrs.create('CLASS', np.string_('IMAGE'))
+                dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
+                dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
+            
+            
+                dset = hdf.create_dataset("events/mask", data=masks, dtype=np.uint8,maxshape=maxshape_mask,fletcher32=True,chunks=True)
+                dset.attrs.create('CLASS', np.string_('IMAGE'))
+                dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
+                dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
+            
+                hdf.create_dataset("events/index_online", data=index_orig,dtype=np.int32)
+                hdf.create_dataset("events/pos_x", data=pos_x, dtype=np.int32)
+                hdf.create_dataset("events/pos_y", data=pos_y, dtype=np.int32)
+                hdf.create_dataset("events/bright_avg", data=bright_avg, dtype=np.float32)
+                hdf.create_dataset("events/bright_sd", data=bright_sd, dtype=np.float32)
+                hdf.create_dataset("events/factor_ch0", data=factor_ch0, dtype=np.float32)
+            
+                hdf.create_dataset("events/circ", data=circularity, dtype=np.float32)
+                hdf.create_dataset("events/inert_ratio_raw", data=inert_ratio_raw, dtype=np.float32)
+                hdf.create_dataset("events/area_ratio", data=area_ratio, dtype=np.float32)
+                hdf.create_dataset("events/area_msd", data=area_orig, dtype=np.float32)
+                hdf.create_dataset("events/area_cvx", data=area_hull, dtype=np.float32)       
+                hdf.create_dataset("events/area_um", data=area_um, dtype=np.float32)       
+                
+                #Adjust metadata:
+                #"experiment:event count" = Nr. of images
+                hdf.attrs["experiment:event count"] = images_ch0_save.shape[0]
+                hdf.attrs["imaging:roi size x"] = images_ch0_save.shape[1]
+                hdf.attrs["imaging:roi size y"] = images_ch0_save.shape[2]
+            
+                hdf.attrs["imaging:pixel size"] = pixel_size
+                hdf.attrs["experiment:date"] = time.strftime("%Y-%m-%d")
+                hdf.attrs["experiment:time"] = time.strftime("%H:%M:%S")
+                #hdf.attrs["setup:identifier"] = "iIACS_2.0"
+                hdf.close()
+
+        ###################### show messagebox ######## 
+        
+        msg = QtWidgets.QMessageBox()
+        msg.setWindowTitle("")
+        text = "\n".join(save_paths)
+        msg.setText("Successfully export .rtdc files in \n" + text)
+        
+        x = msg.exec_()
+            
+    
+    def iacs_save_rtdc_2ch(self):
+        rowPosition = self.table_iacs.rowCount()
+        ch0_paths = []
+        ch1_paths = []
+        save_paths = []
+        for i in range(rowPosition):
+            path = self.table_iacs.item(i, 2).text()
+            if path.endswith("CH0.png"):
+                name = path.split("/")[-1]
+                ch0_path = path
+                ch1_path = path.split("CH0.png")[0]+"CH1.png"
+                if os.path.isfile(ch1_path):
+                    ch0_paths.append(ch0_path)
+                    ch1_paths.append(ch1_path)
+                else:
+                    print("Could not find corresponding CH1 image for:" + ch0_path)
+                    exit()
+                    
+                #path = self.table_iacs.item(0, 2).text()
+                path_target = os.path.dirname(path) + os.sep + os.path.basename(path).split("_CH0.png")[0] + ".rtdc" #filename of resulting file
+                
+                save_paths.append(path_target)
+                #check if the file that should be written may already exists (e.g. after runnig script twice)
+                if os.path.isfile(path_target):
+                    print("Following file already exists and will be overwritten: "+path_target)
+                    #delete the file
+                    os.remove(path_target)
+                
+                #Initialize lists for all properties
+                folder_names,index_orig,images_ch0_save,images_ch1_save,masks,contours,\
+                pos_x,pos_y,size_x,size_y,\
+                bright_avg,bright_sd,factor_ch0,factor_ch1,\
+                area_um,area_orig,area_hull,\
+                area_ratio,circularity,inert_ratio_raw = \
+                [],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]
+                
+                t1 = time.time()
+                #get all images from a large tiled image
+                images_ch0,images_ch1 = [],[]
+                
+                for index in range(len(ch0_paths)):
+                    ch0_path = ch0_paths[index]
+                    ch1_path = ch1_paths
+                
+                    img_ch0 = cv2.imread(ch0_path,-1) #Load one big (tiled) image
+                    img_ch0 = tiled_2_list(img_ch0) #separate tiled img into individual images
+                    images_ch0.append(img_ch0)
+                
+                    img_ch1 = cv2.imread(ch1_path,-1)
+                    img_ch1 = tiled_2_list(img_ch1) #separate tiled img into individual images
+                    images_ch1.append(img_ch1)
+                
+                images_ch0 = np.concatenate(images_ch0)
+                images_ch0 = list(images_ch0)
+                images_ch1 = np.concatenate(images_ch1)
+                images_ch1 = list(images_ch1)
+                
+                
+                ###############Parameters##########################
+                filter_len = self.checkBox_iacs_cl.isChecked()
+                len_min = self.spinBox_iacs_ca_min.value()
+                len_max = self.spinBox_iacs_cl_max.value()
+            
+                filter_area = self.checkBox_iacs_ca.isChecked()
+                area_min = self.spinBox_iacs_ca_min.value()
+                area_max = self.spinBox_iacs_ca_max.value()
+                
+                filter_n = self.checkBox_iacs_cn.isChecked()
+                nr_contours = self.spinBox_iacs_cn.value()
+                
+                pixel_size = self.SpinBox_iacs_pixel.value()
+                ###############Parameters##########################
+                
+                
+                for index in range(len(images_ch0)):
+                    img_ch0 = images_ch0[index]
+                    img_ch0,factor0 = uint16_2_unit8(img_ch0)
+                    img_ch0_bg_removed = vstripes_removal(img_ch0)
+                
+                    img_ch1 = images_ch1[index]    
+                    img_ch1,factor1 = uint16_2_unit8(img_ch1)
+                    img_ch1_bg_removed = vstripes_removal(img_ch1)
+                    
+                    #Create a superposition
+                    img_sup = cv2.add(img_ch0_bg_removed,img_ch1_bg_removed)
+                    #get list of conoturs and masks in image using the superposition
+                    
+                    contours_,masks_ = get_masks_iacs(img_sup, filter_len, len_min, len_max, 
+                                                           filter_area, area_min, area_max, 
+                                                           filter_n, nr_contours)
+                    
+                    
+                    for contour,mask in zip(contours_,masks_):
+                        output = get_boundingbox_features(img_ch0,contour,pixel_size)
+                
+                        if type(contour)!=np.ndarray or np.isnan(output[0]) or np.isnan(output[1]):
+                            folder_names.append(ch0_path)
+                            index_orig.append(index)
+                            images_ch0_save.append(np.zeros(shape=img_ch0.shape))
+                            images_ch1_save.append(np.zeros(shape=img_ch1.shape))
+                            masks.append(np.zeros(shape=img_ch0.shape))
+                            contours.append(np.nan)
+                            factor_ch0.append(np.nan)
+                            factor_ch1.append(np.nan)
+                            pos_x.append(np.nan)
+                            pos_y.append(np.nan)
+                            size_x.append(np.nan)
+                            size_y.append(np.nan)
+                            bright_avg.append(np.nan)
+                            bright_sd.append(np.nan)
+                            area_orig.append(np.nan)
+                            area_hull.append(np.nan)
+                            area_um.append(np.nan)
+                            area_ratio.append(np.nan)
+                            circularity.append(np.nan)
+                            inert_ratio_raw.append(np.nan)
+                
+                        else:
+                            folder_names.append(ch0_path)
+                            index_orig.append(index)
+                            images_ch0_save.append(img_ch0)
+                            images_ch1_save.append(img_ch1)
+                            masks.append(mask)
+                            contours.append(contour)
+                            factor_ch0.append(factor0)
+                            factor_ch1.append(factor1)
+                            pos_x.append(output[0])
+                            pos_y.append(output[1])
+                            size_x.append(output[2])
+                            size_y.append(output[3])
+                            output = get_brightness(img_ch0,mask)
+                            bright_avg.append(output["bright_avg"]/factor0)
+                            bright_sd.append(output["bright_sd"]/factor0)
+                            
+                            output = get_contourfeatures(contour, pixel_size)
+                            area_orig.append(output["area_orig"])
+                            area_hull.append(output["area_hull"])
+                            area_um.append(output["area_um"])
+                            area_ratio.append(output["area_ratio"])
+                            circularity.append(output["circularity"])
+                            inert_ratio_raw.append(output["inert_ratio_raw"])
+                
+                t2 = time.time()
+                dt = t2-t1
+                print("Required time to compute features: " +str(np.round(dt,2) )+"s ("+str(np.round(dt/len(images_ch0_save)*1000,2) )+"ms per cell)")
+                
+                
+                #remove events where no contours were found (pos_x and pos_y is nan)
+                ind_nan = np.isnan(pos_x)
+                ind_nan = np.where(ind_nan==False)[0]
+                if len(ind_nan)>0:
+                    index_orig = list(np.array(index_orig)[ind_nan])
+                    pos_x = list(np.array(pos_x)[ind_nan])
+                    pos_y = list(np.array(pos_y)[ind_nan])
+                    images_ch0_save = list(np.array(images_ch0_save)[ind_nan])
+                    images_ch1_save = list(np.array(images_ch1_save)[ind_nan])
+                    masks = list(np.array(masks)[ind_nan])
+                    contours = list(np.array(contours)[ind_nan])
+                    factor_ch0 = list(np.array(factor_ch0)[ind_nan])
+                    factor_ch1 = list(np.array(factor_ch1)[ind_nan])
+                    bright_avg = list(np.array(bright_avg)[ind_nan])
+                    bright_sd = list(np.array(bright_sd)[ind_nan])
+                    area_orig = list(np.array(area_orig)[ind_nan])
+                    area_hull = list(np.array(area_hull)[ind_nan])
+                    area_um = list(np.array(area_um)[ind_nan])
+                    area_ratio = list(np.array(area_ratio)[ind_nan])
+                    circularity = list(np.array(circularity)[ind_nan])
+                    inert_ratio_raw = list(np.array(inert_ratio_raw)[ind_nan])
+                    
+                    #Save images and corresponding pos_x and pos_y to an hdf5 file for AIDeveloper
+                    images_ch0_save = np.r_[images_ch0_save].astype(np.uint8)
+                    images_ch1_save = np.r_[images_ch1_save].astype(np.uint8)
+                    masks = (np.r_[masks]*255).astype(np.uint8)
+                
+                    # #Create RGB images
+                    #zero_green = np.ones(shape=images_ch0_save.shape)+100
+                    images_3channels = np.stack([images_ch0_save,images_ch1_save,masks],axis=-1)
+        # =============================================================================
+        #             
+        #             #copy the empty Empty.rtdc
+        #             shutil.copy("Empty.rtdc",path_target)
+        #             
+        # =============================================================================
+                    maxshape_1channel = (None, images_ch0_save.shape[1], images_ch0_save.shape[2])
+                    #maxshape_3channels = (None, images_3channels.shape[1], images_3channels.shape[2],3)
+                    maxshape_mask = (None, masks.shape[1], masks.shape[2])
+                    
+                    #Create hdf5 dataset
+                    hdf = h5py.File(path_target,'a')
+                    #events = hdf.require_group("events")
+                
+                    dset = hdf.create_dataset("events/image", data=images_ch0_save, dtype=np.uint8,maxshape=maxshape_1channel,fletcher32=True,chunks=True)
+                    dset.attrs.create('CLASS', np.string_('IMAGE'))
+                    dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
+                    dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
+                
+                    # dset = hdf.create_dataset("events/image_ch0", data=images_ch0_save, dtype=np.uint8,maxshape=maxshape_1channel,fletcher32=True,chunks=True)        
+                    # dset.attrs.create('CLASS', np.string_('IMAGE'))
+                    # dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
+                    # dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
+                
+                    dset = hdf.create_dataset("events/image_ch1", data=images_ch1_save, dtype=np.uint8,maxshape=maxshape_1channel,fletcher32=True,chunks=True)        
+                    dset.attrs.create('CLASS', np.string_('IMAGE'))
+                    dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
+                    dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
+                
+                    #store_mask(h5group=events,name=feat, data=mask, compression="gzip")
+                
+                    dset = hdf.create_dataset("events/mask", data=masks, dtype=np.uint8,maxshape=maxshape_mask,fletcher32=True,chunks=True)
+                    dset.attrs.create('CLASS', np.string_('IMAGE'))
+                    dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
+                    dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
+                    
+                    #Contours are omitted (Masks contain the same information
+                    # for ii, cc in enumerate(contours):
+                    #     hdf.create_dataset("events/contour/"+"{}".format(ii),
+                    #                        data=cc.reshape(cc.shape[0],cc.shape[2]),
+                    #                        fletcher32=True)
+                
+                    hdf.create_dataset("events/index_online", data=index_orig,dtype=np.int32)
+                    hdf.create_dataset("events/pos_x", data=pos_x, dtype=np.int32)
+                    hdf.create_dataset("events/pos_y", data=pos_y, dtype=np.int32)
+                    hdf.create_dataset("events/bright_avg", data=bright_avg, dtype=np.float32)
+                    hdf.create_dataset("events/bright_sd", data=bright_sd, dtype=np.float32)
+                    hdf.create_dataset("events/factor_ch0", data=factor_ch0, dtype=np.float32)
+                    hdf.create_dataset("events/factor_ch1", data=factor_ch1, dtype=np.float32)
+                
+                    hdf.create_dataset("events/circ", data=circularity, dtype=np.float32)
+                    hdf.create_dataset("events/inert_ratio_raw", data=inert_ratio_raw, dtype=np.float32)
+                    hdf.create_dataset("events/area_ratio", data=area_ratio, dtype=np.float32)
+                    hdf.create_dataset("events/area_msd", data=area_orig, dtype=np.float32)
+                    hdf.create_dataset("events/area_cvx", data=area_hull, dtype=np.float32)       
+                    hdf.create_dataset("events/area_um", data=area_um, dtype=np.float32)       
+                    
+                    #Adjust metadata:
+                    #"experiment:event count" = Nr. of images
+                    hdf.attrs["experiment:event count"] = images_ch0_save.shape[0]
+                    #hdf.attrs["experiment:sample"] = sample_name
+                    hdf.attrs["imaging:roi size x"] = images_ch0_save.shape[1]
+                    hdf.attrs["imaging:roi size y"] = images_ch0_save.shape[2]
+                
+                    hdf.attrs["imaging:pixel size"] = pixel_size
+                    hdf.attrs["experiment:date"] = time.strftime("%Y-%m-%d")
+                    hdf.attrs["experiment:time"] = time.strftime("%H:%M:%S")
+                    #hdf.attrs["setup:identifier"] = "iIACS_2.0"
+                    hdf.close()
+    
+        ###################### show messagebox ######## 
+        
+        msg = QtWidgets.QMessageBox()
+        msg.setWindowTitle("")
+        text = "\n".join(save_paths)
+        msg.setText("Successfully export .rtdc files in \n" + text)
+        
+        x = msg.exec_()
+                
+            
 
 
 # =============================================================================
-# Class iPAC
+# iPAC
 # =============================================================================
     
     def dataDropped_ipac(self, l):
@@ -1202,6 +1700,7 @@ class iacs_ipac_reader(QWidget):
             self.table_ipac.resizeRowsToContents()
             btn_delete.clicked.connect(self.delete_item)
 
+
     def send_to_napari_ipac(self, item):
         buttonClicked = self.sender()
         index = self.table_ipac.indexAt(buttonClicked.pos())
@@ -1216,140 +1715,7 @@ class iacs_ipac_reader(QWidget):
         name = os.path.basename(path_image)[:-4] #remove .bin
         
         new_layer = self.viewer.add_image(images,name=name)
-
-    def get_masks_ipac(self, img,noise_level,filter_len, len_min, len_max, filter_area, area_min, area_max, filter_n, nr_contours):
-        """
-        Perform contour finding to get a masks of the (possibly) multiple cells
-        in the image
-
-        Parameters
-        ----------
-        img : numpy array of dimensions (width,height)
-            Grayscale image.
-        sorting : bool
-            Insert True if you use that script during sorting. That has the effect that
-            the function returs -1 if multiple contours were found.
-            Insert False if you want to use that script for preparing the dataset for AIDeveloper. In this case,
-            if there is an image with multiple contours, the script will iterate over the contours and only keep
-            the object if it is not at the edge of the image
-        Returns
-        -------
-        contour: largest contour found in image
-        mask : numpy array of dimensions (width,height)
-            True=Cell, False=Backgound.
-        """
-        img = img[10:57] #remove top[0:10] and bottom[57:67] , not for findcontours
-        img = cv2.medianBlur(img,3)
-        _, thresh = cv2.threshold(img, noise_level, 255, cv2.THRESH_BINARY)
-        
-        
-        kern_size = 2*int(3)+1
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kern_size,kern_size))
-        
-        dilate = cv2.dilate(thresh,kernel)
-        thresh_img = cv2.erode(dilate,kernel)
-        
-        
-        contours, _ = cv2.findContours(thresh_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        contours = sorted(contours, key = len,reverse=True)
-        
-
-        
-        
-        ##############  ind  ###############
-        cnt_lenghts = np.array([len(cnt) for cnt in contours])
-        cnt_area = np.array([cv2.contourArea(cnt) for cnt in contours])
-        #cnt_area = sorted(cnt_area,reverse=True)
-        
-        if filter_len and not filter_area:
-            ind = np.where( (cnt_lenghts>len_min) & (cnt_lenghts<len_max) )[0]
-            
-        if filter_area and not filter_len :
-            ind = np.where( (cnt_area>area_min) & (cnt_area<area_max) )[0]        
-            #print("ind:", ind)
-            
-        if filter_len and filter_area:
-            ind = np.where( (cnt_area>area_min) & (cnt_area<area_max) 
-                           & (cnt_lenghts>len_min) & (cnt_lenghts<len_max))[0]  
-        ##############  ind  ###############
-        
-        if filter_n:
-            contours = list(np.array(contours)[ind])
-            contours.sort(key=len,reverse=True)
-            iterations = min(len(contours),nr_contours)
-            
-        else:
-            iterations = len(contours)
-        
-        contours = contours[0:iterations]
-
-        if len(ind) == 0: #if no conotur was found
-            return [],[np.nan] #return nan -> omit sorting
-
-        masks = []
-        for it in range(iterations):
-            mask = np.zeros(shape=(67,67),dtype="uint8")
-            cv2.drawContours(mask,contours,it,1, cv2.FILLED,offset=(0,10) )# produce a contour with filled inside
-            masks.append(mask)
-        
-        return contours,masks
     
-    def read_image_ipac(self):
-        
-        filter_len = self.checkBox_ipac_cl.isChecked()
-        len_min = self.spinBox_ipac_cl_min.value()
-        len_max = self.spinBox_ipac_cl_max.value()
-        
-        filter_area = self.checkBox_ipac_ca.isChecked()
-        area_min = self.spinBox_ipac_ca_min.value()
-        area_max = self.spinBox_ipac_ca_max.value()
-        noise_level = self.doubleSpinBox_ipac_noise.value() 
-        
-        filter_n = self.checkBox_ipac_cn.isChecked()
-        nr_contours = self.spinBox_ipac_cn.value()
-        cnt_color =  self.get_color(self.comboBox_ipac_cnt_color.currentText())
-        ind_color = self.get_color(self.comboBox_ipac_ind_color.currentText())
-        
-    ##############################
-        bg_intensity = 16381
-    ##############################    
-        index = []
-        for layer in self.select_layers():
-            images_ = layer.data
-
-            images = images_.astype(np.float32) #for conversion to unit8, first make it float (float32 is sufficient)
-            factor = 128/bg_intensity
-            images = np.multiply(images, factor)
-            images.astype(np.uint8)
-
-            #Cell can be darker and brighter than background->Subtract background and take absolute
-            images_abs = images.astype(np.int)-128 #after that, the background is approx 0
-            images_abs = abs(images_abs).astype(np.uint8) #absolute. Neccessary for contour finding
-    
-            
-            contour_img_list = []
-            for img_index in range(len(images)):
-                #load image
-                image = images_[img_index]
-                image, factor = self.uint16_2_unit8(image)  #visulize
-                image_abs = images_abs[img_index]  
-                
-                contours,masks = self.get_masks_ipac(image_abs, noise_level,filter_len, len_min, len_max, 
-                                                     filter_area, area_min, area_max, filter_n, nr_contours)
-    
-                #img = cv2.merge((image.copy(),image.copy(),image.copy())) 
-                ### draw contours and index ###
-                mask = np.zeros((67,67,4),dtype=np.uint8) 
-                if self.checkBox_ipac_contour.isChecked(): #draw contour
-                    cv2.drawContours(mask, contours, -1, cnt_color, 1, offset=(0,10)) #offset: move contour to match img
-                if self.checkBox_ipac_index.isChecked(): #draw index
-                    cv2.putText(mask,str(img_index),(1,7),cv2.FONT_HERSHEY_DUPLEX, 0.3, ind_color,1)
-               
-                contour_img_list.append(mask)
-            
-            index.append([contour_img_list, layer.name])
-        
-        return index
     
     def export_stack_ipac(self):
         #contour_img_list,layer_name = self.read_image_ipac()
@@ -1358,7 +1724,6 @@ class iacs_ipac_reader(QWidget):
             contour_img_list,layer_name = index[i]
             img_stack_ipac = np.array(contour_img_list)
             self.viewer.add_image(img_stack_ipac, name =str(layer_name)+"_cnt_stack")
-        
         
 
     def ipac_save_rtdc(self):
@@ -1382,12 +1747,14 @@ class iacs_ipac_reader(QWidget):
         # load data paths
         rowPosition = self.table_ipac.rowCount()
         paths = []
+        save_paths = []
         for i in range(rowPosition):
             path = self.table_ipac.item(i, 2).text()
             paths.append(path)
         
         for path in paths:
             path_target = os.path.dirname(path) + os.sep + os.path.basename(path).split(".bin")[0] + ".rtdc" #filename of resulting file
+            save_paths.append(path_target)
             #check if the file that should be written may already exists (e.g. after runnig script twice)
             if os.path.isfile(path_target):
                 print("Following file already exists and will be overwritten: "+path_target)
@@ -1423,17 +1790,16 @@ class iacs_ipac_reader(QWidget):
             for img_index in range(len(images)):
                 #load image
                 image = images[img_index]
-                ####
-                image, factor = self.uint16_2_unit8(image) 
+                image, factor = uint16_2_unit8(image) 
                 image_abs = images_abs[img_index]
                         
                 #get list of conoturs and masks in image using the superposition
-                contours_,masks_ = self.get_masks_ipac(image_abs, noise_level,filter_len, len_min, len_max, 
+                contours_,masks_ = get_masks_ipac(image_abs, noise_level,filter_len, len_min, len_max, 
                                                      filter_area, area_min, area_max, filter_n, nr_contours)
                 del image_abs
                 
                 for contour,mask in zip(contours_,masks_):
-                    output = self.get_boundingbox_features(image,contour,pixel_size)
+                    output = get_boundingbox_features(image,contour,pixel_size)
             
                     if type(contour)!=np.ndarray or np.isnan(output[0]) or np.isnan(output[1]):
                         index_orig.append(img_index)
@@ -1464,11 +1830,11 @@ class iacs_ipac_reader(QWidget):
                         size_x.append(output[2])
                         size_y.append(output[3])
                         
-                        output = self.get_brightness(image,mask)
+                        output = get_brightness(image,mask)
                         bright_avg.append(output["bright_avg"])
                         bright_sd.append(output["bright_sd"])
                         
-                        output = self.get_contourfeatures(contour,pixel_size)
+                        output = get_contourfeatures(contour,pixel_size)
                         area_orig.append(output["area_orig"])
                         area_hull.append(output["area_hull"])
                         area_um.append(output["area_um"])
@@ -1557,350 +1923,516 @@ class iacs_ipac_reader(QWidget):
 
                 hdf.close()
                 
-            ###################### show messagebox ######## 
-            msg = QMessageBox()
-            msg.setWindowTitle("")
-            msg.setText("Successfully export .rtdc files in \n" + os.path.dirname(path))
+        ###################### show messagebox ######## 
+        
+        msg = QtWidgets.QMessageBox()
+        msg.setWindowTitle("")
+        text = "\n".join(save_paths)
+        msg.setText("Successfully export .rtdc files in \n" + text)
+        
+        x = msg.exec_()
+        
+
+   
+
+# =============================================================================
+# AID 
+# =============================================================================
+
+    def dataDropped_aid(self, l):
+        #Iterate over l and check if it is a folder or a file (directory)    
+        isfile = [os.path.isfile(str(url)) for url in l]
+        isfolder = [os.path.isdir(str(url)) for url in l]
+
+
+        #####################For folders with rtdc or bin:##########################            
+        #where are folders?
+        ind_true = np.where(np.array(isfolder)==True)[0]
+        foldernames = list(np.array(l)[ind_true]) #select the indices that are valid
+        #On mac, there is a trailing / in case of folders; remove them
+        foldernames = [os.path.normpath(url) for url in foldernames]
+
+        basename = [os.path.basename(f) for f in foldernames]
+        #Look quickly inside the folders and ask the user if he wants to convert
+        #to .rtdc (might take a while!)
+        if len(foldernames)>0: #User dropped (also) folders (which may contain images)
+            url_converted = []
+            for url in foldernames:
+                #get a list of tiff files inside this directory:
+                images = []
+                for root, dirs, files in os.walk(url):
+                    for file in files:
+                        if file.endswith(".rtdc"):
+                            url_converted.append(os.path.join(root, file)) 
+                        if file.endswith(".bin"):
+                            url_converted.append(os.path.join(root, file)) 
+                                  
+            self.dataDropped_aid(url_converted)
+
+        #####################For .rtdc or .bin files:##################################            
+        #where are files?
+        ind_true = np.where(np.array(isfile)==True)[0]
+        filenames = list(np.array(l)[ind_true]) #select the indices that are valid
+        filenames = [x for x in filenames if x.endswith(".rtdc") or x.endswith(".bin")]
+        
+        fileinfo = []
+        for file_path in filenames:
+                fileinfo.append({"file_path":file_path})
+        
+        
+        for rowNumber in range(len(fileinfo)):#for url in l:
+            url = fileinfo[rowNumber]["file_path"]
+
+            #add to table
+            rowPosition = self.table_aid_files.rowCount()
+            self.table_aid_files.insertRow(rowPosition)
+
+            columnPosition = 0
+            #for each item, also create 2 checkboxes (train/valid)
+            item = QtWidgets.QTableWidgetItem()#("item {0} {1}".format(rowNumber, columnNumber))
+            item.setFlags( QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled  )
+            item.setCheckState(QtCore.Qt.Unchecked)
+            self.table_aid_files.setItem(rowPosition, columnPosition, item)
+
+            columnPosition = 1
+            #Place a button which allows to send to napari for viewing
+            btn = QtWidgets.QPushButton(self.table_aid_files)
+            btn.setObjectName("btn_load")
+            btn.setMinimumSize(QtCore.QSize(30, 30))
+            btn.setMaximumSize(QtCore.QSize(100, 100))
+            btn.clicked.connect(self.load_rtdc_images)
+            icon_path = os.path.join(dir_root,"art","eye.png")
+            btn.setIcon(QtGui.QIcon(str(icon_path)))
+            self.table_aid_files.setCellWidget(rowPosition, columnPosition, btn) 
+            self.table_aid_files.resizeRowsToContents()
+
+            columnPosition = 2
+            line = QtWidgets.QTableWidgetItem(str(url)) 
+            line.setFlags( QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            self.table_aid_files.setItem(rowPosition,columnPosition, line) 
             
-            x = msg.exec_()
+            columnPosition = 3
+            btn_delete = QtWidgets.QPushButton(self.table_aid_files)
+            
+            btn_delete.setMinimumSize(QtCore.QSize(30, 30))
+            btn_delete.setMaximumSize(QtCore.QSize(100, 100))
+            icon_path = os.path.join(dir_root,"art","delete.png")
+            btn_delete.setIcon(QtGui.QIcon(str(icon_path)))
+            self.table_aid_files.setCellWidget(rowPosition, columnPosition, btn_delete) 
+            self.table_aid_files.resizeRowsToContents()
+            btn_delete.clicked.connect(self.delete_item)        
+
+    def select_all_aid(self,col):
+        """
+        Check/Uncheck items on table_dragdrop
+        """
+        parent = self.sender().parent()
+        if col == 0:
+            rows = range(parent.rowCount()) #Number of rows of the table
+            tableitems = [parent.item(row, col) for row in rows]
+            
+            checkStates = [tableitem.checkState() for tableitem in tableitems]
+            checked = [state==QtCore.Qt.Checked for state in checkStates]
+            if set(checked)=={True}:#all are checked!
+                #Uncheck all!
+                for tableitem in tableitems:
+                    tableitem.setCheckState(QtCore.Qt.Unchecked)
+            else:#otherwise check all   
+                for tableitem in tableitems:
+                    tableitem.setCheckState(QtCore.Qt.Checked)
+                    
+        if col == 1: #load all
+            children= parent.findChildren(QtWidgets.QPushButton,"btn_load")
+            for button in children:
+                button.click() #click load button
+
+        if col == 3: #delete all
+            for i in range(parent.rowCount()):
+                parent.removeRow(0)
+    
+
+    
+    def anti_vowel(self,c):
+        newstr = ""
+        vowels = ('a', 'e', 'i', 'o', 'u','A', 'E', 'I', 'O', 'U')
+        for x in c.lower():
+            if x in vowels:
+                newstr = ''.join([l for l in c if l not in vowels])    
+        return newstr
+    
+    
+    def load_rtdc_images(self):
+        buttonClicked = self.sender()
+        index = self.table_aid_files.indexAt(buttonClicked.pos())
+        rowPosition = index.row()
+    
+        file_path = self.table_aid_files.item(rowPosition, 2).text()
+        
+        if file_path.endswith(".rtdc"):
+            rtdc_ds = h5py.File(file_path,"r")
+    
+            #Get the images from .rtdc file
+            images = np.array(rtdc_ds["events"]["image"]) 
+        
+            name = os.path.basename(rtdc_path)
+            new_layer = self.viewer.add_image(images,name=name)
+        
+        if file_path.endswith(".bin"):
+            binary = np.fromfile(file_path, dtype='>H')
+            #Get the images from .bin
+            n,w,h = binary[1],binary[3],binary[5]
+            images = binary[6:].reshape(n,h,w)
+            
+            name = os.path.basename(file_path)[:-4] #remove .bin
+            new_layer = self.viewer.add_image(images,name=name)
+            
         
     
-    def iacs_save_rtdc(self):
-        rowPosition = self.table_iacs.rowCount()
-        ch0_paths = []
-        ch1_paths = []
-        for i in range(rowPosition):
-            path = self.table_iacs.item(i, 2).text()
-            if path.endswith("CH0.png"):
-                name = path.split("/")[-1]
-                ch0_path = path
-                ch1_path = path.split("CH0.png")[0]+"CH1.png"
-                if os.path.isfile(ch1_path):
-                    ch0_paths.append(ch0_path)
-                    ch1_paths.append(ch1_path)
-                else:
-                    print("Could not find corresponding CH1 image for:" + ch0_path)
-                    exit()
-                    
-        path = self.table_iacs.item(0, 2).text()
-        path_target = os.path.dirname(path) + os.sep + os.path.basename(path).split(".png")[0] + ".rtdc" #filename of resulting file
-
-        #check if the file that should be written may already exists (e.g. after runnig script twice)
-        if os.path.isfile(path_target):
-            print("Following file already exists and will be overwritten: "+path_target)
-            #delete the file
-            os.remove(path_target)
-        
-        #Initialize lists for all properties
-        folder_names,index_orig,images_ch0_save,images_ch1_save,masks,contours,\
-        pos_x,pos_y,size_x,size_y,\
-        bright_avg,bright_sd,factor_ch0,factor_ch1,\
-        area_um,area_orig,area_hull,\
-        area_ratio,circularity,inert_ratio_raw = \
-        [],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]
-        
-        t1 = time.time()
-        #get all images from a large tiled image
-        images_ch0,images_ch1 = [],[]
-        
-        for index in range(len(ch0_paths)):
-            ch0_path = ch0_paths[index]
-            ch1_path = ch1_paths[index]
-        
-            img_ch0 = cv2.imread(ch0_path,-1) #Load one big (tiled) image
-            img_ch0 = self.tiled_2_list(img_ch0) #separate tiled img into individual images
-            images_ch0.append(img_ch0)
-        
-            img_ch1 = cv2.imread(ch1_path,-1)
-            img_ch1 = self.tiled_2_list(img_ch1) #separate tiled img into individual images
-            images_ch1.append(img_ch1)
-        
-        images_ch0 = np.concatenate(images_ch0)
-        images_ch0 = list(images_ch0)
-        images_ch1 = np.concatenate(images_ch1)
-        images_ch1 = list(images_ch1)
-        
-        
-        ###############Parameters##########################
-        filter_len = self.checkBox_iacs_cl.isChecked()
-        len_min = self.spinBox_iacs_ca_min.value()
-        len_max = self.spinBox_iacs_cl_max.value()
+    def aid_load_model(self):
+        openfile_name = QtWidgets.QFileDialog.getExistingDirectory(self)
+        if openfile_name:
+            self.lineEdit_aid_model_path.setText(openfile_name)
     
-        filter_area = self.checkBox_iacs_ca.isChecked()
-        area_min = self.spinBox_iacs_ca_min.value()
-        area_max = self.spinBox_iacs_ca_max.value()
-        
-        filter_n = self.checkBox_iacs_cn.isChecked()
-        nr_contours = self.spinBox_iacs_cn.value()
-        
-        pixel_size = self.SpinBox_iacs_pixel.value()
-        ###############Parameters##########################
-        
-        
-        for index in range(len(images_ch0)):
-            img_ch0 = images_ch0[index]
-            img_ch0,factor0 = self.uint16_2_unit8(img_ch0)
-            img_ch0_bg_removed = self.vstripes_removal(img_ch0)
-        
-            img_ch1 = images_ch1[index]    
-            img_ch1,factor1 = self.uint16_2_unit8(img_ch1)
-            img_ch1_bg_removed = self.vstripes_removal(img_ch1)
+  
             
-            #Create a superposition
-            img_sup = cv2.add(img_ch0_bg_removed,img_ch1_bg_removed)
-            #get list of conoturs and masks in image using the superposition
-            
-            contours_,masks_ = self.get_masks_iacs(img_sup, filter_len, len_min, len_max, 
-                                                   filter_area, area_min, area_max, 
-                                                   filter_n, nr_contours)
-            
-            
-            for contour,mask in zip(contours_,masks_):
-                output = self.get_boundingbox_features(img_ch0,contour,pixel_size)
-        
-                if type(contour)!=np.ndarray or np.isnan(output[0]) or np.isnan(output[1]):
-                    folder_names.append(ch0_path)
-                    index_orig.append(index)
-                    images_ch0_save.append(np.zeros(shape=img_ch0.shape))
-                    images_ch1_save.append(np.zeros(shape=img_ch1.shape))
-                    masks.append(np.zeros(shape=img_ch0.shape))
-                    contours.append(np.nan)
-                    factor_ch0.append(np.nan)
-                    factor_ch1.append(np.nan)
-                    pos_x.append(np.nan)
-                    pos_y.append(np.nan)
-                    size_x.append(np.nan)
-                    size_y.append(np.nan)
-                    bright_avg.append(np.nan)
-                    bright_sd.append(np.nan)
-                    area_orig.append(np.nan)
-                    area_hull.append(np.nan)
-                    area_um.append(np.nan)
-                    area_ratio.append(np.nan)
-                    circularity.append(np.nan)
-                    inert_ratio_raw.append(np.nan)
-        
-                else:
-                    folder_names.append(ch0_path)
-                    index_orig.append(index)
-                    images_ch0_save.append(img_ch0)
-                    images_ch1_save.append(img_ch1)
-                    masks.append(mask)
-                    contours.append(contour)
-                    factor_ch0.append(factor0)
-                    factor_ch1.append(factor1)
-                    pos_x.append(output[0])
-                    pos_y.append(output[1])
-                    size_x.append(output[2])
-                    size_y.append(output[3])
-                    output = self.get_brightness(img_ch0,mask)
-                    bright_avg.append(output["bright_avg"]/factor0)
-                    bright_sd.append(output["bright_sd"]/factor0)
-                    
-                    output = self.get_contourfeatures(contour, pixel_size)
-                    area_orig.append(output["area_orig"])
-                    area_hull.append(output["area_hull"])
-                    area_um.append(output["area_um"])
-                    area_ratio.append(output["area_ratio"])
-                    circularity.append(output["circularity"])
-                    inert_ratio_raw.append(output["inert_ratio_raw"])
-        
-        t2 = time.time()
-        dt = t2-t1
-        print("Required time to compute features: " +str(np.round(dt,2) )+"s ("+str(np.round(dt/len(images_ch0_save)*1000,2) )+"ms per cell)")
-        
-        
-        #remove events where no contours were found (pos_x and pos_y is nan)
-        ind_nan = np.isnan(pos_x)
-        ind_nan = np.where(ind_nan==False)[0]
-        if len(ind_nan)>0:
-            index_orig = list(np.array(index_orig)[ind_nan])
-            pos_x = list(np.array(pos_x)[ind_nan])
-            pos_y = list(np.array(pos_y)[ind_nan])
-            images_ch0_save = list(np.array(images_ch0_save)[ind_nan])
-            images_ch1_save = list(np.array(images_ch1_save)[ind_nan])
-            masks = list(np.array(masks)[ind_nan])
-            contours = list(np.array(contours)[ind_nan])
-            factor_ch0 = list(np.array(factor_ch0)[ind_nan])
-            factor_ch1 = list(np.array(factor_ch1)[ind_nan])
-            bright_avg = list(np.array(bright_avg)[ind_nan])
-            bright_sd = list(np.array(bright_sd)[ind_nan])
-            area_orig = list(np.array(area_orig)[ind_nan])
-            area_hull = list(np.array(area_hull)[ind_nan])
-            area_um = list(np.array(area_um)[ind_nan])
-            area_ratio = list(np.array(area_ratio)[ind_nan])
-            circularity = list(np.array(circularity)[ind_nan])
-            inert_ratio_raw = list(np.array(inert_ratio_raw)[ind_nan])
-            
-            #Save images and corresponding pos_x and pos_y to an hdf5 file for AIDeveloper
-            images_ch0_save = np.r_[images_ch0_save].astype(np.uint8)
-            images_ch1_save = np.r_[images_ch1_save].astype(np.uint8)
-            masks = (np.r_[masks]*255).astype(np.uint8)
-        
-            # #Create RGB images
-            #zero_green = np.ones(shape=images_ch0_save.shape)+100
-            images_3channels = np.stack([images_ch0_save,images_ch1_save,masks],axis=-1)
-# =============================================================================
-#             
-#             #copy the empty Empty.rtdc
-#             shutil.copy("Empty.rtdc",path_target)
-#             
-# =============================================================================
-            maxshape_1channel = (None, images_ch0_save.shape[1], images_ch0_save.shape[2])
-            #maxshape_3channels = (None, images_3channels.shape[1], images_3channels.shape[2],3)
-            maxshape_mask = (None, masks.shape[1], masks.shape[2])
-            
-            #Create hdf5 dataset
-            hdf = h5py.File(path_target,'a')
-            #events = hdf.require_group("events")
-        
-            dset = hdf.create_dataset("events/image", data=images_ch0_save, dtype=np.uint8,maxshape=maxshape_1channel,fletcher32=True,chunks=True)
-            dset.attrs.create('CLASS', np.string_('IMAGE'))
-            dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
-            dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
-        
-            # dset = hdf.create_dataset("events/image_ch0", data=images_ch0_save, dtype=np.uint8,maxshape=maxshape_1channel,fletcher32=True,chunks=True)        
-            # dset.attrs.create('CLASS', np.string_('IMAGE'))
-            # dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
-            # dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
-        
-            dset = hdf.create_dataset("events/image_ch1", data=images_ch1_save, dtype=np.uint8,maxshape=maxshape_1channel,fletcher32=True,chunks=True)        
-            dset.attrs.create('CLASS', np.string_('IMAGE'))
-            dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
-            dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
-        
-            #store_mask(h5group=events,name=feat, data=mask, compression="gzip")
-        
-            dset = hdf.create_dataset("events/mask", data=masks, dtype=np.uint8,maxshape=maxshape_mask,fletcher32=True,chunks=True)
-            dset.attrs.create('CLASS', np.string_('IMAGE'))
-            dset.attrs.create('IMAGE_VERSION', np.string_('1.2'))
-            dset.attrs.create('IMAGE_SUBCLASS', np.string_('IMAGE_GRAYSCALE'))
-            
-            #Contours are omitted (Masks contain the same information
-            # for ii, cc in enumerate(contours):
-            #     hdf.create_dataset("events/contour/"+"{}".format(ii),
-            #                        data=cc.reshape(cc.shape[0],cc.shape[2]),
-            #                        fletcher32=True)
-        
-            hdf.create_dataset("events/index_online", data=index_orig,dtype=np.int32)
-            hdf.create_dataset("events/pos_x", data=pos_x, dtype=np.int32)
-            hdf.create_dataset("events/pos_y", data=pos_y, dtype=np.int32)
-            hdf.create_dataset("events/bright_avg", data=bright_avg, dtype=np.float32)
-            hdf.create_dataset("events/bright_sd", data=bright_sd, dtype=np.float32)
-            hdf.create_dataset("events/factor_ch0", data=factor_ch0, dtype=np.float32)
-            hdf.create_dataset("events/factor_ch1", data=factor_ch1, dtype=np.float32)
-        
-            hdf.create_dataset("events/circ", data=circularity, dtype=np.float32)
-            hdf.create_dataset("events/inert_ratio_raw", data=inert_ratio_raw, dtype=np.float32)
-            hdf.create_dataset("events/area_ratio", data=area_ratio, dtype=np.float32)
-            hdf.create_dataset("events/area_msd", data=area_orig, dtype=np.float32)
-            hdf.create_dataset("events/area_cvx", data=area_hull, dtype=np.float32)       
-            hdf.create_dataset("events/area_um", data=area_um, dtype=np.float32)       
-            
-            #Adjust metadata:
-            #"experiment:event count" = Nr. of images
-            hdf.attrs["experiment:event count"] = images_ch0_save.shape[0]
-            #hdf.attrs["experiment:sample"] = sample_name
-            hdf.attrs["imaging:roi size x"] = images_ch0_save.shape[1]
-            hdf.attrs["imaging:roi size y"] = images_ch0_save.shape[2]
-        
-            hdf.attrs["imaging:pixel size"] = pixel_size
-            hdf.attrs["experiment:date"] = time.strftime("%Y-%m-%d")
-            hdf.attrs["experiment:time"] = time.strftime("%H:%M:%S")
-            #hdf.attrs["setup:identifier"] = "iIACS_2.0"
-            hdf.close()
+    def aid_classify_rtdc(self,model_path,rtdc_path):
 
-            ###################### show messagebox ######## 
-            msg = QMessageBox()
-            msg.setWindowTitle("")
-            msg.setText("Successfully export .rtdc files in \n" + os.path.dirname(path))
+        #model_path = "/" + self.lineEdit_aid_model_path.text()
+        #find .pb and mate files in model folder
+        for path,dir_list,file_list in os.walk(model_path):
+            for file_name in file_list:
+                if file_name.endswith(".xlsx"):
+                    meta_path = os.path.join(model_path,file_name) 
+                if file_name.endswith(".pb"):
+                    model_pb_path = os.path.join(model_path,file_name) 
+            if not meta_path:
+                print("Could not fine meta file.")
+            if not model_pb_path:
+                print("Could not fine .pb file.")
+        
+        #Load model
+        model_pb = cv2.dnn.readNet(model_pb_path)
+        # Extract image preprocessing settings from meta file
+        img_processing_settings = load_model_meta(meta_path)
+        
+        #Load .rtdc
+        rtdc_ds = h5py.File(rtdc_path,"r")
+        images = np.array(rtdc_ds["events"]["image"]) # get the images
+        pos_x, pos_y = rtdc_ds["events"]["pos_x"][:], rtdc_ds["events"]["pos_y"][:] 
+        pix = rtdc_ds.attrs["imaging:pixel size"] # pixelation (um/pix)
+
+        # Compute the predictions
+        scores = forward_images_cv2(model_pb,img_processing_settings,images,pos_x,pos_y,pix)
+        prediction = np.argmax(scores,axis=1)
+        
+        #predict disease
+        rtdc_ds_len = rtdc_ds["events"]["image"].shape[0] #this way is actually faster than asking any other feature for its len :)
+        prediction_fillnan = np.full([rtdc_ds_len], np.nan)#put initially np.nan for all cells
+
+        classes = scores.shape[1]
+        if classes>9:
+            classes = 9#set the max number of classes to 9. It cannot saved more to .rtdc due to limitation of userdef
+
+        #Make sure the predictions get again to the same length as the initial data set
+        #Fill array with corresponding predictions
+        index = range(len(images))
+
+        for i in range(len(prediction)):
+            indx = index[i]
+            prediction_fillnan[indx] = prediction[i]
+
+        #Predictions are integers
+        prediction_fillnan = prediction_fillnan.astype(int)
+
+        #Get area, area_ratio values for each cell type
+        X_features = getdata2(rtdc_path,prediction_fillnan)
+        values = np.array(X_features[0])
+        values = values.reshape(-1,values.shape[0])
+        FeatNames = X_features[1]
+        X_features = pd.DataFrame(values,columns=FeatNames)
+
+        #re-order the features (Random forest expexts a certain order)
+        features_path = os.path.join(model_path,"02_rf_model","09_RF_v02.3_features.csv")
+        features_select = pd.read_csv(features_path)
+        features = [row for index, row in features_select.itertuples()]
+
+        #Disease classification using Rndom forest model
+        model_path = os.path.join(model_path,"02_rf_model","09_RF_v02.3.sav")
+        #load the random forest model
+        rf_model = pickle.load(open(model_path, 'rb'))
+
+        X_features = X_features[features]
+        disease_probab = rf_model.predict_proba(X_features)
+        
+        
+        return prediction, images, (pos_x/pix).astype(int), (pos_y/pix).astype(int), scores, model_pb_path, disease_probab
+    
+    
+    def show_results(self,prediction,disease_probab):
+        #Statistics
+        result = pd.value_counts(prediction).sort_index()
+        percentage = pd.value_counts(prediction,normalize=True).sort_index()
+        
+        indexs = [index for index,v in result.items()]
+        values = [value for i,value in result.items()]
+        pcts = [pct for i,pct in percentage.items()]
+        Name = ["Noise","single Platelet", "multiple Platelets","single WBC", 
+                "single WBC+Platelets", "multiple WBC", "multiple WBC+Platelets" ]
+        
+        #clear content before add new
+        if not self.table_aid_analy.rowCount() ==0:
+            for i in range(self.table_aid_analy.rowCount()):
+                self.table_aid_analy.removeRow(0) 
+        
+        
+        for rowNumber in range(len(result)):
+            index = indexs[rowNumber]
+            value = values[rowNumber]
+            pct = np.round(pcts[rowNumber],4)
             
-            x = msg.exec_()
+            #add to table
+            rowPosition = self.table_aid_analy.rowCount()
+            self.table_aid_analy.insertRow(rowPosition)
+            
+            columnPosition = 0 # load
+            #Place a button which allows to send to napari for viewing
+            btn = QtWidgets.QPushButton(self.table_aid_analy)
+            btn.setObjectName("btn_load")
+            btn.setMinimumSize(QtCore.QSize(30, 30))
+            btn.setMaximumSize(QtCore.QSize(100, 100))
+            icon = QtGui.QIcon()
+            icon.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","visibility_off.png")), QtGui.QIcon.Active, QtGui.QIcon.On)
+            icon.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","eye.png")), QtGui.QIcon.Active, QtGui.QIcon.Off)
+            btn.setIcon(icon)
+            btn.setCheckable(True)
+            btn.setChecked(True)
+            btn.toggle()
+            btn.clicked.connect(self.send_to_napari_pred_class)
+            
+            self.table_aid_analy.setCellWidget(rowPosition, columnPosition, btn) 
+            self.table_aid_analy.resizeRowsToContents()
+            
+            columnPosition = 1 # class column
+            line = QtWidgets.QTableWidgetItem(str(index)) 
+            
+            line.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+            line.setFlags( QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            self.table_aid_analy.setItem(rowPosition,columnPosition, line) 
+            
+            columnPosition = 2 # name
+            line = QtWidgets.QTableWidgetItem(Name[index]) 
+            line.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+            line.setFlags( QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            self.table_aid_analy.setItem(rowPosition,columnPosition, line) 
+            
+            
+            columnPosition = 3 # number
+            line = QtWidgets.QTableWidgetItem(str(value)) 
+            line.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+            line.setFlags( QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            self.table_aid_analy.setItem(rowPosition,columnPosition, line) 
+            
+            columnPosition = 4 # percentage
+            line = QtWidgets.QTableWidgetItem(str(pct)) 
+            line.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+            line.setFlags( QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            self.table_aid_analy.setItem(rowPosition,columnPosition, line) 
+            
+            pro_bar = QtWidgets.QProgressBar(self.table_aid_analy)
+            pro_bar.setRange(0, 100)
+            pro_bar.setValue(int(pct*100))
+            self.table_aid_analy.setCellWidget(rowPosition, columnPosition, pro_bar) 
+        
+        Name = ["Thrombosis" , "COVID-19"]
+        probability = disease_probab[0]
+        for rowNumber in range(2):
+            #add to table
+            rowPosition = self.table_dise_class.rowCount()
+            self.table_dise_class.insertRow(rowPosition)
+            
+            columnPosition = 0 # disease name
+            line = QtWidgets.QTableWidgetItem(Name[rowNumber]) 
+            line.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+            line.setFlags( QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            self.table_dise_class.setItem(rowPosition,columnPosition, line) 
+            
+            columnPosition = 1 # percentage
+            line = QtWidgets.QTableWidgetItem(probability[rowNumber]) 
+            line.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
+            line.setFlags( QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+            self.table_dise_class.setItem(rowPosition,columnPosition, line) 
+            
+            pro_bar = QtWidgets.QProgressBar(self.table_dise_class)
+            pro_bar.setRange(0, 100)
+            pro_bar.setValue(int(probability[rowNumber]*100))
+            self.table_dise_class.setCellWidget(rowPosition, columnPosition, pro_bar) 
+            
+            
+            
+    def run_classify(self):
+        model_path = "/" + self.lineEdit_aid_model_path.text()        
+        rowPosition = self.table_aid_files.rowCount()
+        rtdc_paths = []
+        bin_paths = []
+        
+        for i in range(rowPosition): # read all checked data
+            if self.table_aid_files.item(i, 0).checkState(): #return 0 or 2,,0:uncheck, 2:checked
+                file_path = self.table_aid_files.item(i, 2).text()
+                if file_path.endswith('.rtdc'):
+                    rtdc_paths.append(file_path)
+                if file_path.endswith('.bin'):
+                    bin_paths.append(file_path)
                 
+        if len(rtdc_paths)>0:
+            for rtdc_path in rtdc_paths:
+                self.prediction, self.images, self.pos_x, self.pos_y, scores, model_pb_path, disease_probab = self.aid_classify_rtdc(model_path,rtdc_path)
+                self.show_results(self.prediction,disease_probab)
+        
+        if len(bin_paths)>0:
+            for bin_path in bin_paths:
+                rtdc_path = bin_2_rtdc(bin_path)
+                self.prediction, self.images, self.pos_x, self.pos_y, scores, model_pb_path, disease_probab = self.aid_classify_rtdc(model_path,rtdc_path)
+                self.show_results(self.prediction,disease_probab)
 
         
-    def tiled_2_list(self,tiled_image):
-        img_list = []
-        for r in range(0, tiled_image.shape[0], 100):
-            for c in range(0, tiled_image.shape[1], 88): 
-                img_list.append(tiled_image[r:r +100,c:c +88]) #this was wrong before. Hence, you had images of 88x88 sometimes. But still, the resulting images look almost identical for both cases.
-        return img_list
-
-    #get the approximate position of the oject in an image
-    def get_boundingbox_features(self, img,contour,pixel_size):
-        """
-        Get the position of the cell by calculating the middle of the bounding box.
-        This is actually only an approximation of "the middle of a cell". More accurate 
-        would be to compute the centroid but that takes a little longer to compute.
-        I guess the bounding box is good enough.
-
-        Parameters
-        ----------
-        img : numpy array of dimensions (width,height)
-            Grayscale image.
-        sorting : bool
-            Insert True if you use that script during sorting. That has the effect that
-            the function returs -1 if multiple contours were found.
-            Insert False if you want to use that script for preparing the dataset for AIDeveloper. In this case,
-            if there is an image with multiple contours, the script will iterate over the contours and only keep
-            the object if it is not at the edge of the image
-        Returns
-        -------
-        pos_x : float
-            x-position of the middle of the bounding box.
-        pos_y : flaot
-            y-position of the middle of the bounding box.
-
-        """
-        if type(contour)!=np.ndarray:#get_mask_sorting returned nan
-            return np.nan,np.nan
-
-        #Bounding box: fast to compute and gives the approximate location of cell
-        x,y,w,h = cv2.boundingRect(contour) #get a bounding box around the object
-        # There should be at least 2 pixels between bounding box and the edge of the image
-        if x>2 and y>2 and y+h+2<img.shape[0] and x+w+2<img.shape[1]:
-            pos_x,pos_y = x+w/2,y+h/2
-        else:#Omit sorting if the object is too close to the edge of the image
-            pos_x,pos_y = np.nan,np.nan
-        
-        return pos_x*pixel_size,pos_y*pixel_size,w*pixel_size,h*pixel_size
     
-    def get_brightness(self, img,mask):
-        bright = cv2.meanStdDev(img, mask=mask)
-        return {"bright_avg":bright[0][0,0],"bright_sd":bright[1][0,0]}
+    def send_to_napari_pred_class(self):
+        #get class images
+        buttonClicked = self.sender()
+        index = self.table_aid_analy.indexAt(buttonClicked.pos())
+        rowPosition = index.row()
+        class_num = self.table_aid_analy.item(rowPosition,1).text()
+        images = self.images
+        class_ind = np.where(self.prediction==int(class_num))
+        class_images = images[class_ind]
+        class_name = "Class " + class_num
+        
+        #add class label
+        x_ = self.pos_x[class_ind]
+        y_ = self.pos_y[class_ind]
+        label = []
+        for i in range(len(class_images)):
+            mask = np.zeros((67,67,4),dtype=np.uint8) 
+            x = x_[i]
+            y = y_[i] 
+            cv2.circle(mask, (x,y), 1, (0,255,0,255),-1)
+            cv2.putText(mask,class_num,(2,11),cv2.FONT_HERSHEY_DUPLEX, 0.4, (255,255,255,255),1)
+            label.append(mask)
+        label = np.array(label)
+        label_name = "Label " + class_num
+        
+        #button status
+        if buttonClicked.isChecked(): #add layer
+            new_layer = self.viewer.add_image(class_images,name=class_name)
+            lable_layer = self.viewer.add_image(label, name=label_name)     
+        else: #delete layer
+            existing_layers = {layer.name for layer in self.viewer.layers} 
+            if class_name in existing_layers:
+                self.viewer.layers.remove(class_name)
+            if label_name in existing_layers:
+                self.viewer.layers.remove(label_name)
+            
+        
+    def send_to_napari_all_class(self,col):
+        if col==0:
+            parent = self.sender().parent()
+            children= parent.findChildren(QtWidgets.QPushButton,"btn_load")
+            for button in children:
+                button.click() #click load button
+
+
+    def aid_add_rtdc(self):
+        model_path = "/" + self.lineEdit_aid_model_path.text() 
+        rowPosition = self.table_aid_files.rowCount()
+        file_paths = []
+        save_paths = []
+        for i in range(rowPosition): # read all data
+            #if self.table_aid_files.item(i, 0).checkState(): #return 0 or 2,,0:uncheck, 2:checked
+                file_path = self.table_aid_files.item(i, 2).text()
+                file_paths.append(file_path)
+        
+        for file_path in file_paths:
+            if file_path.endswith('.rtdc'):
+                rtdc_path = file_path
+            if file_path.endswith('.bin'):
+                rtdc_path = bin_2_rtdc(file_path)
+                
+            prediction, images, pos_x, pos_y, scores, model_pb_path,disease_probab = self.aid_classify_rtdc(model_path,rtdc_path)
+            rtdc_ds = h5py.File(rtdc_path,"r")
+            
+            ###################append scores and pred to .rtdc file########################
+            rtdc_ds_len = rtdc_ds["events"]["image"].shape[0] #this way is actually faster than asking any other feature for its len :)
+            prediction_fillnan = np.full([rtdc_ds_len], np.nan)#put initially np.nan for all cells
+            
+            classes = scores.shape[1]
+            if classes>9:
+                classes = 9#set the max number of classes to 9. It cannot saved more to .rtdc due to limitation of userdef
+            scores_fillnan = np.full([rtdc_ds_len,classes], np.nan)
+    
+            #Make sure the predictions get again to the same length as the initial data set
+            #Fill array with corresponding predictions
+            index = range(len(images))
+    
+            for i in range(len(prediction)):
+                indx = index[i]
+                prediction_fillnan[indx] = prediction[i]
+                #if export_option == "Append to .rtdc":
+                #for class_ in range(classes):
+                scores_fillnan[indx,0:classes] = scores[i,0:classes]
+    
+            #Get savename
+            path, rtdc_file = os.path.split(rtdc_path)
+            
+            fname_addon = os.path.split(model_pb_path)[-1]#the filename of the model
+            fname_addon = fname_addon.split(".pb")[0]
+            fname_addon = self.anti_vowel(fname_addon)#remove the vowels to make it shorter
+            savename = rtdc_path.split(".rtdc")[0]
+            savename = savename+"_"+str(fname_addon)+".rtdc"
+            save_paths.append(savename)
+            
+            if not os.path.isfile(savename):#if such a file does not yet exist...
+                savename = savename
+            else:#such a file already exists!!!
+                #Avoid to overwriting an existing file:
+                print("Adding additional number since file exists!")
+                addon = 1
+                while os.path.isfile(savename):
+                    savename = savename.split(".rtdc")[0]
+                    if addon>1:
+                        savename = savename.split("_"+str(addon-1))[0]
+                    savename = savename+"_"+str(addon)+".rtdc"
+                    addon += 1        
+    
+            print(f"Save as {savename}")                    
+            shutil.copy(rtdc_path, savename) #copy original file
+            #append to hdf5 file
+            with h5py.File(savename, mode="a") as h5:
+                h5["events/userdef0"] = prediction_fillnan
+                #add the scores to userdef1...9
+                userdef_ind = 1
+                for class_ in range(classes):
+                    scores_i = scores_fillnan[:,class_]
+                    h5["events/userdef"+str(userdef_ind)] = scores_i
+                    userdef_ind += 1
+            
+            
+        ###################### show messagebox ######## 
+        msg = QtWidgets.QMessageBox()
+        msg.setWindowTitle("")
+        text = "\n".join(save_paths)
+        msg.setText("Successfully export .rtdc files in \n" + text)
+        
+        x = msg.exec_()
+
+
+        
+        
     
     
-    def get_contourfeatures(self, contour,pixel_size):
-        
-        
-        hull = cv2.convexHull(contour,returnPoints=True)
-
-        mu_orig = cv2.moments(contour)
-        mu_hull = cv2.moments(hull)
-        
-        area_orig = mu_orig["m00"]
-        area_hull = mu_hull["m00"]
-        area_um = area_hull*pixel_size**2
-        if area_orig>0:
-            area_ratio = area_hull/area_orig
-        else:
-            area_ratio = np.nan
-
-        arc = cv2.arcLength(hull, True)    
-        circularity = 2.0 * np.sqrt(np.pi * mu_orig["m00"]) / arc
-        
-        if mu_orig["mu02"]>0:
-            inert_ratio_raw =  np.sqrt(mu_orig["mu20"] / mu_orig["mu02"])
-        else:
-            inert_ratio_raw = np.nan
-        
-        dic = {"area_um":area_um,"area_orig":area_orig,"area_hull":area_hull,\
-               "area_ratio":area_ratio,"circularity":circularity,\
-               "inert_ratio_raw":inert_ratio_raw}
-        return dic
-
 
 @napari_hook_implementation
 def napari_experimental_provide_dock_widget():
     # you can return either a single widget, or a sequence of widgets
     return [iacs_ipac_reader]
+
+
