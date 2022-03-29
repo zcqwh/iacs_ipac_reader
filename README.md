@@ -49,7 +49,7 @@ The iacs-ipac-reader plugin mainly include 3 functional tabs:
 
 
 ### iPAC image contour tracker
-<center>**Interface of iPAC contour tracker**</center>    
+**Interface of iPAC contour tracker**
 
 ![ipac.](https://github.com/zcqwh/iacs_ipac_reader/blob/main/Tutorial/pictures/ipac.png?raw=true "iPAC")
 
