@@ -48,16 +48,16 @@ The iacs-ipac-reader plugin mainly include 3 functional tabs:
 
 
 
-###iPAC image contour tracker
-<center>__Interface of iPAC contour tracker__</center>
+### iPAC image contour tracker
+<center>__Interface of iPAC contour tracker__</center>   
 ![avatar][ipac.]
 
-###IACS image contour tracker
-<center>__Interface of IACS contour tracker__</center>
+### IACS image contour tracker
+<center>__Interface of IACS contour tracker__</center>   
 ![avatar][iacs.]
 
-###AID classif.
-<center>__Interface of AID classif.__</center>
+### AID classif.
+<center>__Interface of AID classif.__</center>   
 ![avatar][AID_classif.]
 
 
