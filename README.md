@@ -59,7 +59,8 @@ The iacs-ipac-reader plugin mainly include 3 functional tabs:
 ![iacs.](https://github.com/zcqwh/iacs_ipac_reader/blob/main/Tutorial/pictures/iacs.png?raw=true "IACS")
 
 ### AID classif.
-<center>__Interface of AID classif.__</center>      
+<center>__Interface of AID classif.__</center>     
+ 
 ![AID_classif.](https://github.com/zcqwh/iacs_ipac_reader/blob/main/Tutorial/pictures/classifier.jpg?raw=true "AID classif")
 
 
