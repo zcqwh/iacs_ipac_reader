@@ -107,6 +107,7 @@ def get_masks_iacs(img, filter_len, len_min, len_max, filter_area, area_min, are
     if len(contours) == 0: #if no conotur was found
         return [],[np.nan] #return nan -> omit sorting
     
+    
     if filter_n:
         # contours = list(np.array(contours)[ind])
         iterations = min(len(contours),nr_contours)

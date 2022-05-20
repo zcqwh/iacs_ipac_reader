@@ -2,14 +2,15 @@ import napari
 from napari_plugin_engine import napari_hook_implementation
 from PyQt5 import QtCore, QtGui, QtWidgets
 
-import cv2, h5py, os, time, shutil, pickle, csv
+import cv2, h5py, os, time, shutil, pickle
 import numpy as np
 import pandas as pd
+from statsmodels.nonparametric.kernel_density import KDEMultivariate
+from pytranskit.optrans.continuous.cdt import CDT
 
-from .aid_cv2_dnn import*
-from .image_processing import get_masks_ipac,get_masks_iacs,tiled_2_list,get_boundingbox_features,get_brightness,get_contourfeatures,add_colormap,get_color,uint16_2_unit8,vstripes_removal,hstripes_removal
-from .ApplyRF import*
-from .background_program import*
+from .import aid_cv2_dnn 
+from . import image_processing
+from .background_program import bin_2_rtdc
 
 
 
@@ -17,6 +18,8 @@ from .background_program import*
 np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)  
 
 dir_root = os.path.dirname(__file__)#ask the module for its origin
+
+    
 
 class MyTable(QtWidgets.QTableWidget):
     dropped = QtCore.pyqtSignal(list) 
@@ -63,29 +66,31 @@ class MyTable(QtWidgets.QTableWidget):
 
         
 class LineEdit(QtWidgets.QLineEdit):
-        def __init__( self, parent ):
-            super(LineEdit, self).__init__(parent)
-            self.setDragEnabled(True)
+    dropped = QtCore.pyqtSignal(str) 
+    def __init__( self, parent ):
+        super(LineEdit, self).__init__(parent)
+        self.setDragEnabled(True)
 
-        def dragEnterEvent( self, event ):
-            data = event.mimeData()
-            urls = data.urls()
-            if ( urls and urls[0].scheme() == 'file' ):
-                event.acceptProposedAction()
+    def dragEnterEvent( self, event ):
+        data = event.mimeData()
+        urls = data.urls()
+        if ( urls and urls[0].scheme() == 'file' ):
+            event.acceptProposedAction()
 
-        def dragMoveEvent( self, event ):
-            data = event.mimeData()
-            urls = data.urls()
-            if ( urls and urls[0].scheme() == 'file' ):
-                event.acceptProposedAction()
+    def dragMoveEvent( self, event ):
+        data = event.mimeData()
+        urls = data.urls()
+        if ( urls and urls[0].scheme() == 'file' ):
+            event.acceptProposedAction()
 
-        def dropEvent( self, event ):
-            data = event.mimeData()
-            urls = data.urls()
-            if ( urls and urls[0].scheme() == 'file' ):
-                # for some reason, this doubles up the intro slash
-                filepath = str(urls[0].path())[1:]
-                self.setText(filepath)
+    def dropEvent( self, event ):
+        data = event.mimeData()
+        urls = data.urls()
+        if ( urls and urls[0].scheme() == 'file' ):
+            # for some reason, this doubles up the intro slash
+            filepath = str(urls[0].path())[1:]
+            self.setText(filepath)
+        self.dropped.emit(filepath)
 
 
 class iacs_ipac_reader(QtWidgets.QWidget):
@@ -98,8 +103,7 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         self.layout().addWidget(Form)
         
         Form.setObjectName("Form")
-        Form.setMaximumSize(QtCore.QSize(600, 16777215))
-        
+        Form.resize(361, 710)
         self.gridLayout_4 = QtWidgets.QGridLayout(Form)
         self.gridLayout_4.setContentsMargins(1, 1, 1, 1)
         self.gridLayout_4.setObjectName("gridLayout_4")
@@ -231,22 +235,20 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         sizePolicy.setHeightForWidth(self.comboBox_ipac_cnt_color.sizePolicy().hasHeightForWidth())
         self.comboBox_ipac_cnt_color.setSizePolicy(sizePolicy)
         self.comboBox_ipac_cnt_color.setObjectName("comboBox_ipac_cnt_color")
-        
         icon = QtGui.QIcon()
-        icon.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","green.png")), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon.addPixmap(QtGui.QPixmap(":/icon/green.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.comboBox_ipac_cnt_color.addItem(icon, "")
         icon1 = QtGui.QIcon()
-        icon1.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","aqua.png")), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon1.addPixmap(QtGui.QPixmap(":/icon/aqua.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.comboBox_ipac_cnt_color.addItem(icon1, "")
         icon2 = QtGui.QIcon()
-        icon2.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","red.png")), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon2.addPixmap(QtGui.QPixmap(":/icon/red.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.comboBox_ipac_cnt_color.addItem(icon2, "")
         icon3 = QtGui.QIcon()
-        icon3.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","black.png")), QtGui.QIcon.Normal, QtGui.QIcon.Off)
+        icon3.addPixmap(QtGui.QPixmap(":/icon/black.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.comboBox_ipac_cnt_color.addItem(icon3, "")
         icon4 = QtGui.QIcon()
-        icon4.addPixmap(QtGui.QPixmap(os.path.join(dir_root,"art","white.png")), QtGui.QIcon.Normal, QtGui.QIcon.Off)
-        
+        icon4.addPixmap(QtGui.QPixmap(":/icon/white.png"), QtGui.QIcon.Normal, QtGui.QIcon.Off)
         self.comboBox_ipac_cnt_color.addItem(icon4, "")
         self.gridLayout_5.addWidget(self.splitter_7, 0, 0, 1, 2)
         self.splitter_8 = QtWidgets.QSplitter(self.groupBox_ipac_preview)
@@ -488,21 +490,34 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         self.btn_iacs_stack.setObjectName("btn_iacs_stack")
         self.gridLayout_7.addWidget(self.splitter_iacs_btn, 5, 0, 1, 1)
         self.tabWidget.addTab(self.tab_iacs, "")
-        #self.gridLayout_4.addWidget(self.tabWidget, 0, 0, 1, 1)
-
         self.tab_aid = QtWidgets.QWidget()
         self.tab_aid.setObjectName("tab_aid")
         self.gridLayout_9 = QtWidgets.QGridLayout(self.tab_aid)
         self.gridLayout_9.setContentsMargins(6, 6, 6, 6)
         self.gridLayout_9.setObjectName("gridLayout_9")
+        self.btn_aid_add_rtdc = QtWidgets.QPushButton(self.tab_aid)
+        self.btn_aid_add_rtdc.setCheckable(False)
+        self.btn_aid_add_rtdc.setChecked(False)
+        self.btn_aid_add_rtdc.setObjectName("btn_aid_add_rtdc")
+        self.gridLayout_9.addWidget(self.btn_aid_add_rtdc, 2, 0, 1, 1)
         self.splitter_2 = QtWidgets.QSplitter(self.tab_aid)
         self.splitter_2.setOrientation(QtCore.Qt.Vertical)
         self.splitter_2.setChildrenCollapsible(False)
         self.splitter_2.setObjectName("splitter_2")
         self.groupBox_aid_files = QtWidgets.QGroupBox(self.splitter_2)
+        self.groupBox_aid_files.setEnabled(True)
         self.groupBox_aid_files.setObjectName("groupBox_aid_files")
         self.gridLayout_8 = QtWidgets.QGridLayout(self.groupBox_aid_files)
         self.gridLayout_8.setObjectName("gridLayout_8")
+##### Manually change ####
+        self.table_aid_files = MyTable(0,4,self.groupBox_aid_files)
+        self.table_aid_files.setObjectName("table_aid_files")
+        self.gridLayout_8.addWidget(self.table_aid_files, 0, 0, 1, 2)
+        self.btn_aid_classify = QtWidgets.QPushButton(self.groupBox_aid_files)
+        self.btn_aid_classify.setCheckable(False)
+        self.btn_aid_classify.setChecked(False)
+        self.btn_aid_classify.setObjectName("btn_aid_classify")
+        self.gridLayout_8.addWidget(self.btn_aid_classify, 2, 0, 1, 2)
         self.splitter = QtWidgets.QSplitter(self.groupBox_aid_files)
         self.splitter.setOrientation(QtCore.Qt.Horizontal)
         self.splitter.setChildrenCollapsible(False)
@@ -522,16 +537,13 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         #self.lineEdit_aid_model_path.setEnabled(False)
         self.lineEdit_aid_model_path.setDragEnabled(True)
         self.lineEdit_aid_model_path.setObjectName("lineEdit_aid_model_path")
-        
         self.gridLayout_8.addWidget(self.splitter, 1, 0, 1, 2)
-        self.btn_aid_classify = QtWidgets.QPushButton(self.groupBox_aid_files)
-        self.btn_aid_classify.setObjectName("btn_aid_classify")
-        self.gridLayout_8.addWidget(self.btn_aid_classify, 2, 0, 1, 2)
-        ##### Manually change ####
-        self.table_aid_files = MyTable(0,4,self.groupBox_aid_files)
-        self.table_aid_files.setObjectName("table_aid_files")
-        self.gridLayout_8.addWidget(self.table_aid_files, 0, 0, 1, 2)
         self.groupBox_aid_analy = QtWidgets.QGroupBox(self.splitter_2)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        sizePolicy.setHorizontalStretch(0)
+        sizePolicy.setVerticalStretch(0)
+        sizePolicy.setHeightForWidth(self.groupBox_aid_analy.sizePolicy().hasHeightForWidth())
+        self.groupBox_aid_analy.setSizePolicy(sizePolicy)
         self.groupBox_aid_analy.setObjectName("groupBox_aid_analy")
         self.gridLayout_25 = QtWidgets.QGridLayout(self.groupBox_aid_analy)
         self.gridLayout_25.setObjectName("gridLayout_25")
@@ -540,23 +552,25 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         self.table_aid_analy = MyTable(0,5,self.groupBox_aid_analy)
         self.table_aid_analy.setEnabled(True)
         self.table_aid_analy.setObjectName("table_aid_analy")
-        self.gridLayout_25.addWidget(self.table_aid_analy, 0, 0, 1, 1)
-        
+        self.gridLayout_25.addWidget(self.table_aid_analy, 1, 0, 1, 1)
+        self.label_phenotype = QtWidgets.QLabel(self.groupBox_aid_analy)
+        self.label_phenotype.setText("")
+        self.label_phenotype.setObjectName("label_phenotype")
+        self.gridLayout_25.addWidget(self.label_phenotype, 0, 0, 1, 1)
         self.groupBox_dise_class = QtWidgets.QGroupBox(self.splitter_2)
         self.groupBox_dise_class.setObjectName("groupBox_dise_class")
         self.gridLayout_10 = QtWidgets.QGridLayout(self.groupBox_dise_class)
         self.gridLayout_10.setObjectName("gridLayout_10")
         self.table_dise_class = MyTable(0,2, self.groupBox_dise_class)
         self.table_dise_class.setObjectName("table_dise_class")
-        self.gridLayout_10.addWidget(self.table_dise_class, 0, 0, 1, 1)
-        
-        self.gridLayout_9.addWidget(self.splitter_2, 0, 0, 1, 1)
-        self.btn_aid_add_rtdc = QtWidgets.QPushButton(self.tab_aid)
-        self.btn_aid_add_rtdc.setObjectName("btn_aid_add_rtdc")
-        self.gridLayout_9.addWidget(self.btn_aid_add_rtdc, 1, 0, 1, 1)
+        self.gridLayout_10.addWidget(self.table_dise_class, 1, 0, 1, 1)
+        self.label_disease = QtWidgets.QLabel(self.groupBox_dise_class)
+        self.label_disease.setText("")
+        self.label_disease.setObjectName("label_disease")
+        self.gridLayout_10.addWidget(self.label_disease, 0, 0, 1, 1)
+        self.gridLayout_9.addWidget(self.splitter_2, 1, 0, 1, 1)
         self.tabWidget.addTab(self.tab_aid, "")
         self.gridLayout_4.addWidget(self.tabWidget, 0, 0, 1, 1)
-
 
         self.retranslateUi(Form)
         self.tabWidget.setCurrentIndex(2)
@@ -668,6 +682,8 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         for i in [0,1]:
             header.setSectionResizeMode(i, QtWidgets.QHeaderView.Stretch)
         
+        self.lineEdit_aid_model_path.dropped.connect(self.show_model_choose)
+        
 
     def retranslateUi(self, Form):
         _translate = QtCore.QCoreApplication.translate
@@ -742,8 +758,82 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         self.btn_aid_classify.setText(_translate("Form", "Classify"))
         self.groupBox_aid_analy.setTitle(_translate("Form", "Phenotype classification"))
         self.groupBox_dise_class.setTitle(_translate("Form", "Disease classification"))
+
+
+        _translate = QtCore.QCoreApplication.translate
+        Form.setWindowTitle(_translate("Form", "Form"))
+        self.groupBox_ipac.setTitle(_translate("Form", "Files table"))
+        self.label_ipac_pixel.setText(_translate("Form", "Pixel size"))
+        self.groupBox_ipac_thresh.setTitle(_translate("Form", "Maunal threshold"))
+        self.label_ipac_noise.setText(_translate("Form", "Noisel level"))
+        self.groupBox_ipac_contour.setTitle(_translate("Form", "Contour options"))
+        self.checkBox_ipac_ca.setText(_translate("Form", "Contour area"))
+        self.label_ipac_min.setText(_translate("Form", "Min"))
+        self.checkBox_ipac_cn.setText(_translate("Form", "N of contours"))
+        self.label_ipac_max.setText(_translate("Form", "Max"))
+        self.checkBox_ipac_cl.setText(_translate("Form", "Contour length"))
+        self.groupBox_ipac_preview.setTitle(_translate("Form", "Preview options"))
+        self.checkBox_ipac_contour.setText(_translate("Form", "Show contours"))
+        self.comboBox_ipac_cnt_color.setItemText(0, _translate("Form", "Green"))
+        self.comboBox_ipac_cnt_color.setItemText(1, _translate("Form", "Aqua"))
+        self.comboBox_ipac_cnt_color.setItemText(2, _translate("Form", "Red"))
+        self.comboBox_ipac_cnt_color.setItemText(3, _translate("Form", "Black"))
+        self.comboBox_ipac_cnt_color.setItemText(4, _translate("Form", "White"))
+        self.checkBox_ipac_index.setText(_translate("Form", "Show index"))
+        self.comboBox_ipac_ind_color.setItemText(0, _translate("Form", "White"))
+        self.comboBox_ipac_ind_color.setItemText(1, _translate("Form", "Black"))
+        self.comboBox_ipac_ind_color.setItemText(2, _translate("Form", "Green"))
+        self.comboBox_ipac_ind_color.setItemText(3, _translate("Form", "Red"))
+        self.comboBox_ipac_ind_color.setItemText(4, _translate("Form", "Aqua"))
+        self.btn_ipac_save.setText(_translate("Form", "Save .rtdc"))
+        self.btn_ipac_stack.setText(_translate("Form", "Preview stack"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_ipac), _translate("Form", "iPAC"))
+        self.groupBox_iacs.setTitle(_translate("Form", "Files table"))
+        self.label.setText(_translate("Form", "Number of channels"))
+        self.groupBox_colormap.setTitle(_translate("Form", "Colormap"))
+        self.label_channel0.setText(_translate("Form", "Channel 0"))
+        self.comboBox_iacs_ch0.setItemText(0, _translate("Form", "Red"))
+        self.comboBox_iacs_ch0.setItemText(1, _translate("Form", "Green"))
+        self.comboBox_iacs_ch0.setItemText(2, _translate("Form", "Aqua"))
+        self.label_channel1.setText(_translate("Form", "Channel 1"))
+        self.comboBox_iacs_ch1.setItemText(0, _translate("Form", "Green"))
+        self.comboBox_iacs_ch1.setItemText(1, _translate("Form", "Aqua"))
+        self.comboBox_iacs_ch1.setItemText(2, _translate("Form", "Red"))
+        self.label_iacs_pixel.setText(_translate("Form", "Pixel size"))
+        self.groupBox_iacs_contour.setTitle(_translate("Form", "Contour options"))
+        self.label_iacs_min.setText(_translate("Form", "Min"))
+        self.label_iacs_max.setText(_translate("Form", "Max"))
+        self.checkBox_iacs_cl.setText(_translate("Form", "Contour length"))
+        self.checkBox_iacs_ca.setText(_translate("Form", "Contour area"))
+        self.checkBox_iacs_cn.setText(_translate("Form", "N of contours"))
+        self.groupBox_iacs_preview_opt.setTitle(_translate("Form", "Preview options"))
+        self.checkBox_iacs_index.setText(_translate("Form", "Show grid index"))
+        self.comboBox_iacs_ind_color.setItemText(0, _translate("Form", "White"))
+        self.comboBox_iacs_ind_color.setItemText(1, _translate("Form", "Black"))
+        self.comboBox_iacs_ind_color.setItemText(2, _translate("Form", "Green"))
+        self.comboBox_iacs_ind_color.setItemText(3, _translate("Form", "Red"))
+        self.comboBox_iacs_ind_color.setItemText(4, _translate("Form", "Aqua"))
+        self.checkBox_iacs_contour.setText(_translate("Form", "Show contours"))
+        self.comboBox_iacs_cnt_color.setItemText(0, _translate("Form", "Green"))
+        self.comboBox_iacs_cnt_color.setItemText(1, _translate("Form", "Aqua"))
+        self.comboBox_iacs_cnt_color.setItemText(2, _translate("Form", "Red"))
+        self.comboBox_iacs_cnt_color.setItemText(3, _translate("Form", "Black"))
+        self.comboBox_iacs_cnt_color.setItemText(4, _translate("Form", "White"))
+        self.btn_iacs_save.setText(_translate("Form", "Save .rtdc"))
+        self.btn_iacs_tiles.setText(_translate("Form", "Preview tiles"))
+        self.btn_iacs_stack.setText(_translate("Form", "Preview stack"))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_iacs), _translate("Form", "IACS"))
+        
+        self.table_aid_files.setToolTip(_translate("Form", "Drag and drop .rtdc or .bin files here."))
+        self.lineEdit_aid_model_path.setToolTip(_translate("Form", "Drag and drop the model folder containing the .pb file and meta.xlsx file here."))
+        self.groupBox_aid_files.setTitle(_translate("Form", "Files table"))
+        self.btn_aid_load_model.setText(_translate("Form", "Choose model"))
+        self.btn_aid_load_model.setToolTip(_translate("Form", "Choose the model folder containing the .pb file and meta.xlsx file."))
+        self.btn_aid_classify.setText(_translate("Form", "Classify"))
+        self.groupBox_aid_analy.setTitle(_translate("Form", "Phenotype classification"))
+        self.groupBox_dise_class.setTitle(_translate("Form", "Disease classification"))
         self.btn_aid_add_rtdc.setText(_translate("Form", "Add classification to .rtdc file"))
-        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_aid), _translate("Form", "AID classif."))
+        self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_aid), _translate("Form", "Disease classif."))
 
 
     def chk_statues(self, spinbox):
@@ -919,7 +1009,7 @@ class iacs_ipac_reader(QtWidgets.QWidget):
     
         path_image = self.table_iacs.item(rowPosition, 2).text()
         image = cv2.imread(path_image,-1)
-        image,_ = uint16_2_unit8(image)
+        image,_ = image_processing.uint16_2_unit8(image)
         name = os.path.basename(path_image)
             
         new_layer = self.viewer.add_image(image,name=name)
@@ -937,18 +1027,18 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         area_max = self.spinBox_iacs_ca_max.value()
         filter_n = self.checkBox_iacs_cn.isChecked()
         nr_contours = self.spinBox_iacs_cn.value()
-        cnt_color = get_color(self.comboBox_iacs_cnt_color.currentText())
-        ind_color = get_color(self.comboBox_iacs_ind_color.currentText())
+        cnt_color = image_processing.get_color(self.comboBox_iacs_cnt_color.currentText())
+        ind_color = image_processing.get_color(self.comboBox_iacs_ind_color.currentText())
 # ============================================================================
         image = layer.data
-        img_list = tiled_2_list(image)
+        img_list = image_processing.tiled_2_list(image)
         contours_images_list = []
         for index in range(len(img_list)):
             img = img_list[index]
-            img, factor = uint16_2_unit8(img)
-            img = vstripes_removal(img)
+            img, factor = image_processing.uint16_2_unit8(img)
+            img = image_processing.vstripes_removal(img)
 
-            contours_,masks_ = get_masks_iacs(img, filter_len, len_min, len_max, 
+            contours_,masks_ = image_processing.get_masks_iacs(img, filter_len, len_min, len_max, 
                                                    filter_area, area_min, area_max, 
                                                    filter_n, nr_contours)
             
@@ -993,17 +1083,17 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         area_max = self.spinBox_iacs_ca_max.value()
         filter_n = self.checkBox_iacs_cn.isChecked()
         nr_contours = self.spinBox_iacs_cn.value()
-        cnt_color = get_color(self.comboBox_iacs_cnt_color.currentText())
-        ind_color = get_color(self.comboBox_iacs_ind_color.currentText())
+        cnt_color = image_processing.get_color(self.comboBox_iacs_cnt_color.currentText())
+        ind_color = image_processing.get_color(self.comboBox_iacs_ind_color.currentText())
         
         ch0_color = self.comboBox_iacs_ch0.currentText()
         ch1_color = self.comboBox_iacs_ch1.currentText()
 # =============================================================================
 
         tiled_img_ch0 = layer_ch0.data
-        images_ch0 = tiled_2_list(tiled_img_ch0)
+        images_ch0 = image_processing.tiled_2_list(tiled_img_ch0)
         tiled_img_ch1 = layer_ch1.data
-        images_ch1 = tiled_2_list(tiled_img_ch1)
+        images_ch1 = image_processing.tiled_2_list(tiled_img_ch1)
         
         contours_images_list = []
         colormap_images_list = []
@@ -1011,13 +1101,13 @@ class iacs_ipac_reader(QtWidgets.QWidget):
             image_ch0 = images_ch0[i]
             image_ch1 = images_ch1[i]
             
-            image_ch0,factor0 = uint16_2_unit8(image_ch0) 
-            image_ch1,factor1 = uint16_2_unit8(image_ch1) 
-            image_ch0 = vstripes_removal(image_ch0)
-            image_ch1 = vstripes_removal(image_ch1)
+            image_ch0,factor0 = image_processing.uint16_2_unit8(image_ch0) 
+            image_ch1,factor1 = image_processing.uint16_2_unit8(image_ch1) 
+            image_ch0 = image_processing.vstripes_removal(image_ch0)
+            image_ch1 = image_processing.vstripes_removal(image_ch1)
 
             img_sup = cv2.add(image_ch0,image_ch1)
-            contours_,masks_ = get_masks_iacs(img_sup, filter_len, len_min, len_max, 
+            contours_,masks_ = image_processing.get_masks_iacs(img_sup, filter_len, len_min, len_max, 
                                                    filter_area, area_min, area_max, 
                                                    filter_n, nr_contours)
             
@@ -1033,8 +1123,8 @@ class iacs_ipac_reader(QtWidgets.QWidget):
             contours_images_list.append(trans_mask)
             
             if self.groupBox_colormap.isChecked():
-                image_ch0_color = add_colormap(image_ch0,ch0_color)
-                image_ch1_color = add_colormap(image_ch1,ch1_color)
+                image_ch0_color = image_processing.add_colormap(image_ch0,ch0_color)
+                image_ch1_color = image_processing.add_colormap(image_ch1,ch1_color)
                 img_sup = cv2.add(image_ch0_color,image_ch1_color)
             
             colormap_images_list.append(img_sup)
@@ -1177,7 +1267,7 @@ class iacs_ipac_reader(QtWidgets.QWidget):
                 ch0_path = ch0_paths[index]
             
                 img_ch0 = cv2.imread(ch0_path,-1) #Load one big (tiled) image
-                img_ch0 = tiled_2_list(img_ch0) #separate tiled img into individual images
+                img_ch0 = image_processing.tiled_2_list(img_ch0) #separate tiled img into individual images
                 images_ch0.append(img_ch0)
             
             images_ch0 = np.concatenate(images_ch0)
@@ -1201,15 +1291,15 @@ class iacs_ipac_reader(QtWidgets.QWidget):
             
             for index in range(len(images_ch0)):
                 img_ch0 = images_ch0[index]
-                img_ch0,factor0 = uint16_2_unit8(img_ch0)
-                img_ch0_bg_removed = vstripes_removal(img_ch0)
-                contours_,masks_ = get_masks_iacs(img_ch0_bg_removed, filter_len, len_min, len_max, 
+                img_ch0,factor0 = image_processing.uint16_2_unit8(img_ch0)
+                img_ch0_bg_removed = image_processing.vstripes_removal(img_ch0)
+                contours_,masks_ = image_processing.get_masks_iacs(img_ch0_bg_removed, filter_len, len_min, len_max, 
                                                        filter_area, area_min, area_max, 
                                                        filter_n, nr_contours)
                 
                 
                 for contour,mask in zip(contours_,masks_):
-                    output = get_boundingbox_features(img_ch0,contour,pixel_size)
+                    output = image_processing.get_boundingbox_features(img_ch0,contour,pixel_size)
             
                     if type(contour)!=np.ndarray or np.isnan(output[0]) or np.isnan(output[1]):
                         folder_names.append(ch0_path)
@@ -1242,11 +1332,11 @@ class iacs_ipac_reader(QtWidgets.QWidget):
                         pos_y.append(output[1])
                         size_x.append(output[2])
                         size_y.append(output[3])
-                        output = get_brightness(img_ch0,mask)
+                        output = image_processing.get_brightness(img_ch0,mask)
                         bright_avg.append(output["bright_avg"]/factor0)
                         bright_sd.append(output["bright_sd"]/factor0)
                         
-                        output = get_contourfeatures(contour, pixel_size)
+                        output = image_processing.get_contourfeatures(contour, pixel_size)
                         area_orig.append(output["area_orig"])
                         area_hull.append(output["area_hull"])
                         area_um.append(output["area_um"])
@@ -1371,6 +1461,9 @@ class iacs_ipac_reader(QtWidgets.QWidget):
                     #delete the file
                     os.remove(path_target)
                 
+                print("path_target:",path_target)
+                print("path_target type:", type(path_target))
+                
                 #Initialize lists for all properties
                 folder_names,index_orig,images_ch0_save,images_ch1_save,masks,contours,\
                 pos_x,pos_y,size_x,size_y,\
@@ -1385,14 +1478,14 @@ class iacs_ipac_reader(QtWidgets.QWidget):
                 
                 for index in range(len(ch0_paths)):
                     ch0_path = ch0_paths[index]
-                    ch1_path = ch1_paths
+                    ch1_path = ch1_paths[index]
                 
                     img_ch0 = cv2.imread(ch0_path,-1) #Load one big (tiled) image
-                    img_ch0 = tiled_2_list(img_ch0) #separate tiled img into individual images
+                    img_ch0 = image_processing.tiled_2_list(img_ch0) #separate tiled img into individual images
                     images_ch0.append(img_ch0)
                 
                     img_ch1 = cv2.imread(ch1_path,-1)
-                    img_ch1 = tiled_2_list(img_ch1) #separate tiled img into individual images
+                    img_ch1 = image_processing.tiled_2_list(img_ch1) #separate tiled img into individual images
                     images_ch1.append(img_ch1)
                 
                 images_ch0 = np.concatenate(images_ch0)
@@ -1419,24 +1512,24 @@ class iacs_ipac_reader(QtWidgets.QWidget):
                 
                 for index in range(len(images_ch0)):
                     img_ch0 = images_ch0[index]
-                    img_ch0,factor0 = uint16_2_unit8(img_ch0)
-                    img_ch0_bg_removed = vstripes_removal(img_ch0)
+                    img_ch0,factor0 = image_processing.uint16_2_unit8(img_ch0)
+                    img_ch0_bg_removed = image_processing.vstripes_removal(img_ch0)
                 
                     img_ch1 = images_ch1[index]    
-                    img_ch1,factor1 = uint16_2_unit8(img_ch1)
-                    img_ch1_bg_removed = vstripes_removal(img_ch1)
+                    img_ch1,factor1 = image_processing.uint16_2_unit8(img_ch1)
+                    img_ch1_bg_removed = image_processing.vstripes_removal(img_ch1)
                     
                     #Create a superposition
                     img_sup = cv2.add(img_ch0_bg_removed,img_ch1_bg_removed)
                     #get list of conoturs and masks in image using the superposition
                     
-                    contours_,masks_ = get_masks_iacs(img_sup, filter_len, len_min, len_max, 
+                    contours_,masks_ = image_processing.get_masks_iacs(img_sup, filter_len, len_min, len_max, 
                                                            filter_area, area_min, area_max, 
                                                            filter_n, nr_contours)
                     
                     
                     for contour,mask in zip(contours_,masks_):
-                        output = get_boundingbox_features(img_ch0,contour,pixel_size)
+                        output = image_processing.get_boundingbox_features(img_ch0,contour,pixel_size)
                 
                         if type(contour)!=np.ndarray or np.isnan(output[0]) or np.isnan(output[1]):
                             folder_names.append(ch0_path)
@@ -1473,11 +1566,11 @@ class iacs_ipac_reader(QtWidgets.QWidget):
                             pos_y.append(output[1])
                             size_x.append(output[2])
                             size_y.append(output[3])
-                            output = get_brightness(img_ch0,mask)
+                            output = image_processing.get_brightness(img_ch0,mask)
                             bright_avg.append(output["bright_avg"]/factor0)
                             bright_sd.append(output["bright_sd"]/factor0)
                             
-                            output = get_contourfeatures(contour, pixel_size)
+                            output = image_processing.get_contourfeatures(contour, pixel_size)
                             area_orig.append(output["area_orig"])
                             area_hull.append(output["area_hull"])
                             area_um.append(output["area_um"])
@@ -1716,6 +1809,63 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         
         new_layer = self.viewer.add_image(images,name=name)
     
+    def read_image_ipac(self):
+
+        filter_len = self.checkBox_ipac_cl.isChecked()
+        len_min = self.spinBox_ipac_cl_min.value()
+        len_max = self.spinBox_ipac_cl_max.value()
+
+        filter_area = self.checkBox_ipac_ca.isChecked()
+        area_min = self.spinBox_ipac_ca_min.value()
+        area_max = self.spinBox_ipac_ca_max.value()
+        noise_level = self.doubleSpinBox_ipac_noise.value() 
+
+        filter_n = self.checkBox_ipac_cn.isChecked()
+        nr_contours = self.spinBox_ipac_cn.value()
+        cnt_color =  image_processing.get_color(self.comboBox_ipac_cnt_color.currentText())
+        ind_color = image_processing.get_color(self.comboBox_ipac_ind_color.currentText())
+
+    ##############################
+        bg_intensity = 16381
+    ##############################    
+        index = []
+        for layer in self.select_layers():
+            images_ = layer.data
+
+            images = images_.astype(np.float32) #for conversion to unit8, first make it float (float32 is sufficient)
+            factor = 128/bg_intensity
+            images = np.multiply(images, factor)
+            images.astype(np.uint8)
+
+            #Cell can be darker and brighter than background->Subtract background and take absolute
+            images_abs = images.astype(np.int)-128 #after that, the background is approx 0
+            images_abs = abs(images_abs).astype(np.uint8) #absolute. Neccessary for contour finding
+
+
+            contour_img_list = []
+            for img_index in range(len(images)):
+                #load image
+                image = images_[img_index]
+                image, factor = image_processing.uint16_2_unit8(image)  #visulize
+                image_abs = images_abs[img_index]  
+
+                contours,masks = image_processing.get_masks_ipac(image_abs, noise_level,filter_len, len_min, len_max, 
+                                                     filter_area, area_min, area_max, filter_n, nr_contours)
+
+                #img = cv2.merge((image.copy(),image.copy(),image.copy())) 
+                ### draw contours and index ###
+                mask = np.zeros((67,67,4),dtype=np.uint8) 
+                if self.checkBox_ipac_contour.isChecked(): #draw contour
+                    cv2.drawContours(mask, contours, -1, cnt_color, 1) #, offset=(0,10),offset: move contour to match img
+                if self.checkBox_ipac_index.isChecked(): #draw index
+                    cv2.putText(mask,str(img_index),(1,7),cv2.FONT_HERSHEY_DUPLEX, 0.3, ind_color,1)
+
+                contour_img_list.append(mask)
+
+            index.append([contour_img_list, layer.name])
+
+        return index
+        
     
     def export_stack_ipac(self):
         #contour_img_list,layer_name = self.read_image_ipac()
@@ -1725,7 +1875,7 @@ class iacs_ipac_reader(QtWidgets.QWidget):
             img_stack_ipac = np.array(contour_img_list)
             self.viewer.add_image(img_stack_ipac, name =str(layer_name)+"_cnt_stack")
         
-
+    
     def ipac_save_rtdc(self):
         ###############Parameters##########################
         filter_len = self.checkBox_ipac_cl.isChecked()
@@ -1790,16 +1940,16 @@ class iacs_ipac_reader(QtWidgets.QWidget):
             for img_index in range(len(images)):
                 #load image
                 image = images[img_index]
-                image, factor = uint16_2_unit8(image) 
+                image, factor = image_processing.uint16_2_unit8(image) 
                 image_abs = images_abs[img_index]
                         
                 #get list of conoturs and masks in image using the superposition
-                contours_,masks_ = get_masks_ipac(image_abs, noise_level,filter_len, len_min, len_max, 
+                contours_,masks_ = image_processing.get_masks_ipac(image_abs, noise_level,filter_len, len_min, len_max, 
                                                      filter_area, area_min, area_max, filter_n, nr_contours)
                 del image_abs
                 
                 for contour,mask in zip(contours_,masks_):
-                    output = get_boundingbox_features(image,contour,pixel_size)
+                    output = image_processing.get_boundingbox_features(image,contour,pixel_size)
             
                     if type(contour)!=np.ndarray or np.isnan(output[0]) or np.isnan(output[1]):
                         index_orig.append(img_index)
@@ -1830,11 +1980,11 @@ class iacs_ipac_reader(QtWidgets.QWidget):
                         size_x.append(output[2])
                         size_y.append(output[3])
                         
-                        output = get_brightness(image,mask)
+                        output = image_processing.get_brightness(image,mask)
                         bright_avg.append(output["bright_avg"])
                         bright_sd.append(output["bright_sd"])
                         
-                        output = get_contourfeatures(contour,pixel_size)
+                        output = image_processing.get_contourfeatures(contour,pixel_size)
                         area_orig.append(output["area_orig"])
                         area_hull.append(output["area_hull"])
                         area_um.append(output["area_um"])
@@ -2052,14 +2202,6 @@ class iacs_ipac_reader(QtWidgets.QWidget):
     
 
     
-    def anti_vowel(self,c):
-        newstr = ""
-        vowels = ('a', 'e', 'i', 'o', 'u','A', 'E', 'I', 'O', 'U')
-        for x in c.lower():
-            if x in vowels:
-                newstr = ''.join([l for l in c if l not in vowels])    
-        return newstr
-    
     
     def load_rtdc_images(self):
         buttonClicked = self.sender()
@@ -2074,7 +2216,7 @@ class iacs_ipac_reader(QtWidgets.QWidget):
             #Get the images from .rtdc file
             images = np.array(rtdc_ds["events"]["image"]) 
         
-            name = os.path.basename(rtdc_path)
+            name = os.path.basename(file_path)
             new_layer = self.viewer.add_image(images,name=name)
         
         if file_path.endswith(".bin"):
@@ -2089,43 +2231,108 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         
     
     def aid_load_model(self):
-        openfile_name = QtWidgets.QFileDialog.getExistingDirectory(self)
-        if openfile_name:
-            self.lineEdit_aid_model_path.setText(openfile_name)
+        model_path = QtWidgets.QFileDialog.getExistingDirectory(self)
+        if model_path:
+            self.lineEdit_aid_model_path.setText(model_path)
+        
     
-  
+    def show_model_choose(self,model_path):
+# =============================================================================
+#         print(model_path)
+# =============================================================================
+        #Search models in the folder 
+        dir_list = []
+        for path, dir_, file in os.walk("/"+model_path,"r"):
+            for dir_name in dir_:
+                dir_list.append(dir_name)
+        
+        # Check if CNN morphological classification exists
+        if "01_model" in dir_list:
+            self.label_phenotype.setText("01_model")
+        else:    
+            print("Could not find CNN morphological classification model")
+        
+        # Check if rf/plda disease prediction model exidts
+        if "02_rf_model"in dir_list and "03_pca_plda_models" in dir_list:
+            ###################### show messagebox ######## 
+            msg = QtWidgets.QMessageBox()
+            msg.setWindowTitle("Error")
+            msg.setText("Multiple models are chosen." )
+            x = msg.exec_()
+        elif "02_rf_model" in dir_list:
+            self.label_disease.setText("02_rf_model")
+        elif "03_pca_plda_models" in dir_list:
+            self.label_disease.setText("03_pca_plda_models")
+        else:
+            print("Could not find disease prediction model.")  
+
             
     def aid_classify_rtdc(self,model_path,rtdc_path):
-
-        #model_path = "/" + self.lineEdit_aid_model_path.text()
-        #find .pb and mate files in model folder
-        for path,dir_list,file_list in os.walk(model_path):
-            for file_name in file_list:
-                if file_name.endswith(".xlsx"):
-                    meta_path = os.path.join(model_path,file_name) 
-                if file_name.endswith(".pb"):
-                    model_pb_path = os.path.join(model_path,file_name) 
-            if not meta_path:
-                print("Could not fine meta file.")
-            if not model_pb_path:
-                print("Could not fine .pb file.")
+        
+        #Load the CNN morphological classification model
+        try:
+            meta_path = os.path.join(model_path,"01_model","M10_Nitta6l_32pix_8class_meta.xlsx") 
+        except:
+            print("Could not fine meta file.")
+        
+        try:
+            model_pb_path = os.path.join(model_path,"01_model","M10_Nitta6l_32pix_8class_448_optimized.pb") 
+        except:
+            print("Could not fine .pb file.")
+        
+        #Load Random Forest disease prediction model
+        try:
+            model_rf_path = os.path.join(model_path,"02_rf_model","09_RF_v02.3.sav")
+        except:
+            print("Could not fine 02_rf_model/09_RF_v02.3.sav")
+        
+        #Load CDT-PCA-PLDA disease prediction model
+        try:
+            model_pca_path = os.path.join(model_path,"03_pca_plda_models","02_PCA_v06.4.sav")
+        except:
+            print("Could not fine 03_pca_plda_models/02_PCA_v06.4.sav")
+            
+        try:
+            model_plda_path = os.path.join(model_path,"03_pca_plda_models","02_PLDA_v06.4.sav")
+        except:
+            print("Could not find 03_pca_plda_models/02_PLDA_v06.4.sav")
+            
+        try:
+            norm_path = os.path.join(model_path,"03_pca_plda_models","02_PLDA_v06_norm.csv") # normalization parameters
+        except:
+            print("Could not find 03_pca_plda_models/02_PLDA_v06_norm.csv")
+        
+        
+        DF_norm = pd.read_csv(norm_path)
+        mn = DF_norm["mn"]
+        av = DF_norm["av"]
+        sd = DF_norm["sd"]
+        
+        ###############################################################################
+        
+        t1 = time.time()
         
         #Load model
         model_pb = cv2.dnn.readNet(model_pb_path)
         # Extract image preprocessing settings from meta file
-        img_processing_settings = load_model_meta(meta_path)
+        img_processing_settings = aid_cv2_dnn.load_model_meta(meta_path)
+        
         
         #Load .rtdc
         rtdc_ds = h5py.File(rtdc_path,"r")
         images = np.array(rtdc_ds["events"]["image"]) # get the images
         pos_x, pos_y = rtdc_ds["events"]["pos_x"][:], rtdc_ds["events"]["pos_y"][:] 
         pix = rtdc_ds.attrs["imaging:pixel size"] # pixelation (um/pix)
-
+        
+        
         # Compute the predictions
-        scores = forward_images_cv2(model_pb,img_processing_settings,images,pos_x,pos_y,pix)
+        scores = aid_cv2_dnn.forward_images_cv2(model_pb,img_processing_settings,images,pos_x,pos_y,pix)
         prediction = np.argmax(scores,axis=1)
         
-        #predict disease
+        
+        t2 = time.time()
+        
+       ###################Get the class predictions########################
         rtdc_ds_len = rtdc_ds["events"]["image"].shape[0] #this way is actually faster than asking any other feature for its len :)
         prediction_fillnan = np.full([rtdc_ds_len], np.nan)#put initially np.nan for all cells
 
@@ -2143,29 +2350,145 @@ class iacs_ipac_reader(QtWidgets.QWidget):
 
         #Predictions are integers
         prediction_fillnan = prediction_fillnan.astype(int)
+        
+        t3 = time.time() 
+        print("Phenotype classification:{} Disease predicetion:{} Total:{}".format(np.round((t2-t1),4),np.round((t3-t2),4),np.round((t3-t1),4)))
 
-        #Get area, area_ratio values for each cell type
-        X_features = getdata2(rtdc_path,prediction_fillnan)
-        values = np.array(X_features[0])
+# =============================================================================
+#         #Get area, area_ratio values for each cell type
+#         X_features = getdata2(rtdc_path,prediction_fillnan)
+#         values = np.array(X_features[0])
+#         values = values.reshape(-1,values.shape[0])
+#         FeatNames = X_features[1]
+#         X_features = pd.DataFrame(values,columns=FeatNames)
+# 
+#         #re-order the features (Random forest expexts a certain order)
+#         features_path = os.path.join(model_path,"02_rf_model","09_RF_v02.3_features.csv")
+#         features_select = pd.read_csv(features_path)
+#         features = [row for index, row in features_select.itertuples()]
+# 
+#         #Disease classification using Rndom forest model
+#         model_path = os.path.join(model_path,"02_rf_model","09_RF_v02.3.sav")
+#         #load the random forest model
+#         rf_model = pickle.load(open(model_path, 'rb'))
+# 
+#         X_features = X_features[features]
+#         disease_probab = rf_model.predict_proba(X_features)
+#         
+#         
+# =============================================================================
+        
+
+        def getdata3(rtdc_path,userdef0):
+            """
+            Get distributions: 
+                - area and solidity for platelets
+                - area and solidity for clusters
+            """
+            feature_name = ["Area","Solidity"]
+            keys = ["area_um","area_ratio"]
+            classes = [1,2] #1=single platelet, 2=cluster
+
+# =============================================================================
+#             print(rtdc_path)
+# =============================================================================
+            NameList,List = [],[]
+            
+            rtdc_ds = h5py.File(rtdc_path, 'r')
+
+
+            for cl in classes:
+                ind_x = np.where(userdef0==cl)[0]        
+                for k in range(len(keys)):
+                    values = rtdc_ds["events"][keys[k]][:][ind_x]
+                    #remove nan values and zeros
+                    ind = np.isnan(values)
+                    ind = np.where(ind==False)[0]
+                    values = values[ind]
+                    ind = np.where(values!=0)[0]
+                    values = values[ind]
+                    if keys[k]=="area_ratio":
+                        values = 1/values#convert to solidity (solidity=1/area_ratio)
+                    
+                    NameList.append(feature_name[k]+"_class"+str(cl))
+                    if len(values)==0:
+                        List.append(np.nan)
+                    else:
+                        List.append(values)
+
+            return [List,NameList]
+        
+        def cdt_transform(X):
+            cdt = CDT()
+
+            epsilon = 1e-7
+            N = X.shape[1]
+            x0 = np.linspace(0, 1, N)
+            x = np.linspace(0, 1, N)
+            I0 = np.ones(x0.size)
+            I0 = abs(I0) + epsilon
+            I0 = I0/I0.sum()
+            
+            X_hat = np.zeros((X.shape[0],X.shape[1]-2,X.shape[2]))
+            for a in range(X.shape[0]):
+                for b in range(X.shape[2]):
+                    I1 = X[a,:,b]
+                    I1 = abs(I1) + epsilon
+                    I1 = I1/I1.sum()
+                    I1_hat, I1_hat_old, xtilde = cdt.forward(x0, I0, x, I1,rm_edge=True)
+                    X_hat[a,:,b]=I1_hat
+            
+            X_hat = X_hat.reshape(X_hat.shape[0],-1)
+            return X_hat
+        
+        X = getdata3(rtdc_path,prediction_fillnan)
+        values = np.array(X[0])
         values = values.reshape(-1,values.shape[0])
-        FeatNames = X_features[1]
-        X_features = pd.DataFrame(values,columns=FeatNames)
-
-        #re-order the features (Random forest expexts a certain order)
-        features_path = os.path.join(model_path,"02_rf_model","09_RF_v02.3_features.csv")
-        features_select = pd.read_csv(features_path)
-        features = [row for index, row in features_select.itertuples()]
-
-        #Disease classification using Rndom forest model
-        model_path = os.path.join(model_path,"02_rf_model","09_RF_v02.3.sav")
-        #load the random forest model
-        rf_model = pickle.load(open(model_path, 'rb'))
-
-        X_features = X_features[features]
-        disease_probab = rf_model.predict_proba(X_features)
+        FeatNames = X[1]
+        X = pd.DataFrame(values,columns=FeatNames)
+        X.reset_index(drop=True, inplace=True)
         
+
+        mxMP = 1000
+        Ldst = 5000
+        sprd = 25
+        d_dom=np.linspace(0,mxMP,num=Ldst)
+        d_dom=np.expand_dims(d_dom,axis=1)
         
+
+        #Transform data into density using KDE
+        X_kde = np.zeros((X.shape[0],Ldst,X.shape[1]))
+        dX = pd.DataFrame(X)
+        for a in range(X.shape[0]):
+            for b in range(X.shape[1]):
+                tmp = dX.iat[a,b]
+                tmp = tmp-mn[b]
+                t = av[b]+sprd*sd[b]
+                tmp = mxMP*tmp/t
+                tmp = np.expand_dims(tmp,axis=1)
+                
+                kde = KDEMultivariate(tmp,var_type='c')
+                pdf = kde.pdf(d_dom)
+                pdf = 100*pdf/pdf.sum()
+                
+                X_kde[a,:,b] = pdf
+                    
+# =============================================================================
+#             print('kde-p'+str(a+1))
+# =============================================================================
+
+
+        #load the PCA and PLDA models
+        plda_model = pickle.load(open(model_plda_path, 'rb'))
+        pca_model = pickle.load(open(model_pca_path, 'rb'))
+
+
+        X_cdt = cdt_transform(X_kde)
+        X_pca  = pca_model.transform(X_cdt)
+        disease_probab = plda_model.predict_proba(X_pca)
+
         return prediction, images, (pos_x/pix).astype(int), (pos_y/pix).astype(int), scores, model_pb_path, disease_probab
+
     
     
     def show_results(self,prediction,disease_probab):
@@ -2243,8 +2566,13 @@ class iacs_ipac_reader(QtWidgets.QWidget):
             pro_bar.setValue(int(pct*100))
             self.table_aid_analy.setCellWidget(rowPosition, columnPosition, pro_bar) 
         
+        
+        #clear content before add new
+        if not self.table_dise_class.rowCount() ==0:
+            for i in range(self.table_dise_class.rowCount()):
+                self.table_dise_class.removeRow(0) 
+        
         Name = ["Thrombosis" , "COVID-19"]
-        probability = disease_probab[0]
         for rowNumber in range(2):
             #add to table
             rowPosition = self.table_dise_class.rowCount()
@@ -2257,24 +2585,38 @@ class iacs_ipac_reader(QtWidgets.QWidget):
             self.table_dise_class.setItem(rowPosition,columnPosition, line) 
             
             columnPosition = 1 # percentage
-            line = QtWidgets.QTableWidgetItem(probability[rowNumber]) 
+            probability = disease_probab[rowNumber][0]
+            line = QtWidgets.QTableWidgetItem(probability) 
             line.setTextAlignment(QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter)
             line.setFlags( QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
             self.table_dise_class.setItem(rowPosition,columnPosition, line) 
             
             pro_bar = QtWidgets.QProgressBar(self.table_dise_class)
-            pro_bar.setRange(0, 100)
-            pro_bar.setValue(int(probability[rowNumber]*100))
+            n = 100
+
+            # setting maximum value for 2 decimal points
+            pro_bar.setMaximum(100 * n)
+            
+            # value in percentage
+            value = probability*100
+            
+            # setting the value by multiplying it to 100
+            pro_bar.setValue(value * n)
+            
+            # displaying the decimal value
+            pro_bar.setFormat("%.02f %%" % value)
+# =============================================================================
+#             pro_bar.setRange(0, 100)
+#             pro_bar.setValue(int(probability[rowNumber]*100))
+# =============================================================================
             self.table_dise_class.setCellWidget(rowPosition, columnPosition, pro_bar) 
             
             
             
     def run_classify(self):
-        model_path = "/" + self.lineEdit_aid_model_path.text()        
-        rowPosition = self.table_aid_files.rowCount()
         rtdc_paths = []
         bin_paths = []
-        
+        rowPosition = self.table_aid_files.rowCount()
         for i in range(rowPosition): # read all checked data
             if self.table_aid_files.item(i, 0).checkState(): #return 0 or 2,,0:uncheck, 2:checked
                 file_path = self.table_aid_files.item(i, 2).text()
@@ -2282,19 +2624,35 @@ class iacs_ipac_reader(QtWidgets.QWidget):
                     rtdc_paths.append(file_path)
                 if file_path.endswith('.bin'):
                     bin_paths.append(file_path)
-                
-        if len(rtdc_paths)>0:
-            for rtdc_path in rtdc_paths:
-                self.prediction, self.images, self.pos_x, self.pos_y, scores, model_pb_path, disease_probab = self.aid_classify_rtdc(model_path,rtdc_path)
-                self.show_results(self.prediction,disease_probab)
         
-        if len(bin_paths)>0:
-            for bin_path in bin_paths:
-                rtdc_path = bin_2_rtdc(bin_path)
-                self.prediction, self.images, self.pos_x, self.pos_y, scores, model_pb_path, disease_probab = self.aid_classify_rtdc(model_path,rtdc_path)
-                self.show_results(self.prediction,disease_probab)
+        if rtdc_paths==[] and bin_paths == []:
+            msg = QtWidgets.QMessageBox()
+            msg.setWindowTitle("Error")
+            msg.setText("No .rtdc or .bin selected.")
+            x = msg.exec_()
+        
+        if self.lineEdit_aid_model_path.text()=='':
+            msg = QtWidgets.QMessageBox()
+            msg.setWindowTitle("Error")
+            msg.setText("No model selected.")
+            x = msg.exec_()
+            
+        else:
+            model_path = "/" + self.lineEdit_aid_model_path.text() 
+        
+            if len(rtdc_paths)>0:
+                for rtdc_path in rtdc_paths:
+                    self.prediction, self.images, self.pos_x, self.pos_y, scores, model_pb_path, disease_probab = self.aid_classify_rtdc(model_path,rtdc_path)
+                    self.show_results(self.prediction,disease_probab)
+            
+            if len(bin_paths)>0:
+                for bin_path in bin_paths:
+                    rtdc_path = bin_2_rtdc(bin_path)
+                    self.prediction, self.images, self.pos_x, self.pos_y, scores, model_pb_path, disease_probab = self.aid_classify_rtdc(model_path,rtdc_path)
+                    self.show_results(self.prediction,disease_probab)
+                        
 
-        
+    
     
     def send_to_napari_pred_class(self):
         #get class images
@@ -2355,7 +2713,7 @@ class iacs_ipac_reader(QtWidgets.QWidget):
             if file_path.endswith('.rtdc'):
                 rtdc_path = file_path
             if file_path.endswith('.bin'):
-                rtdc_path = bin_2_rtdc(file_path)
+                dic = bin_2_rtdc(file_path)
                 
             prediction, images, pos_x, pos_y, scores, model_pb_path,disease_probab = self.aid_classify_rtdc(model_path,rtdc_path)
             rtdc_ds = h5py.File(rtdc_path,"r")
@@ -2403,7 +2761,7 @@ class iacs_ipac_reader(QtWidgets.QWidget):
                     savename = savename+"_"+str(addon)+".rtdc"
                     addon += 1        
     
-            print(f"Save as {savename}")                    
+            #print(f"Save as {savename}")                    
             shutil.copy(rtdc_path, savename) #copy original file
             #append to hdf5 file
             with h5py.File(savename, mode="a") as h5:
@@ -2424,12 +2782,14 @@ class iacs_ipac_reader(QtWidgets.QWidget):
         
         x = msg.exec_()
 
-
+    def anti_vowel(self,c):
+        newstr = ""
+        vowels = ('a', 'e', 'i', 'o', 'u','A', 'E', 'I', 'O', 'U')
+        for x in c.lower():
+            if x in vowels:
+                newstr = ''.join([l for l in c if l not in vowels])    
+        return newstr
         
-        
-    
-    
-
 @napari_hook_implementation
 def napari_experimental_provide_dock_widget():
     # you can return either a single widget, or a sequence of widgets

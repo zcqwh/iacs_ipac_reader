@@ -8,9 +8,10 @@ Created on Thu Feb 10 15:52:23 2022
 import os, time, h5py
 import numpy as np
 from .image_processing import*
-
+np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)
 
 def bin_2_rtdc(bin_path):
+    t1 = time.time()
     ###############Parameters##########################
     filter_len = True
     len_min = 10
@@ -44,10 +45,10 @@ def bin_2_rtdc(bin_path):
     images = images.astype(np.float32) #for conversion to unit8, first make it float (float32 is sufficient)
     factor = 128/bg_intensity
     images = np.multiply(images, factor)
-    images.astype(np.uint8)
+    images = images.astype(np.uint8)
 
     #Cell can be darker and brighter than background->Subtract background and take absolute
-    images_abs = images.astype(np.int)-128 #after that, the background is approx 0
+    images_abs = images.astype(np.int32)-128 #after that, the background is approx 0
     images_abs = abs(images_abs).astype(np.uint8) #absolute. Neccessary for contour finding
     
 
@@ -78,7 +79,7 @@ def bin_2_rtdc(bin_path):
     
             if type(contour)!=np.ndarray or np.isnan(output[0]) or np.isnan(output[1]):
                 index_orig.append(img_index)
-                images_save.append(np.zeros(shape=image.shape))
+                images_save.append(np.zeros(shape=image.shape,dtype=np.uint8))
                 masks.append(np.zeros(shape=image.shape))
                 contours.append(np.nan)
                 pos_x.append(np.nan)
@@ -132,8 +133,13 @@ def bin_2_rtdc(bin_path):
         size_x = list(np.array(size_x)[ind_nan])
         size_y = list(np.array(size_y)[ind_nan])
     
-        images_save = list(np.array(images_save)[ind_nan])
-        masks = list(np.array(masks)[ind_nan])
+# =============================================================================
+#         images_save = list(np.array(images_save,dtype=np.uint8)[ind_nan])
+#         masks = list(np.array(masks,dtype=np.bool_)[ind_nan])   
+# =============================================================================
+        images_save = [images_save[index] for index in ind_nan]
+        masks = [masks[index] for index in ind_nan]
+        
         contours = list(np.array(contours)[ind_nan])
         bright_avg = list(np.array(bright_avg)[ind_nan])
         bright_sd = list(np.array(bright_sd)[ind_nan])
@@ -145,8 +151,8 @@ def bin_2_rtdc(bin_path):
         inert_ratio_raw = list(np.array(inert_ratio_raw)[ind_nan])
         
         #Save images and corresponding pos_x and pos_y to an hdf5 file for AIDeveloper
-        images_save = np.r_[images_save]
-        masks = np.r_[masks]
+        images_save = np.array(images_save)
+        masks = np.array(masks)
         
         maxshape_img = (None, images_save.shape[1], images_save.shape[2])
         maxshape_mask = (None, masks.shape[1], masks.shape[2])
@@ -198,4 +204,10 @@ def bin_2_rtdc(bin_path):
 
         hdf.close()
     
+    t2 = time.time()
+    print("bin. to rtdc.:",np.round((t2-t1),4))
+    
     return path_target
+
+
+

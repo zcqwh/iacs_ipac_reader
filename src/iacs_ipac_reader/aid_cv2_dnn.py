@@ -195,7 +195,8 @@ def image_crop_pad_cv2(images,pos_x,pos_y,pix,final_h,final_w,padding_mode="cv2.
     """
     #Convert position of cell from "um" to "pixel index"
     pos_x,pos_y = pos_x/pix,pos_y/pix  
-
+    
+    
     for i in range(len(images)):
         image = images[i]
     
@@ -410,7 +411,7 @@ def image_preprocessing(images,pos_x,pos_y,pix=0.34,target_imsize=32,
 
     #Adjust number of channels
     images = image_adjust_channels(images,target_channels)
-    #Convert image array to list 
+    #Convert image array to list clea
     images = list(images)
 
     #Apply zooming operation if required

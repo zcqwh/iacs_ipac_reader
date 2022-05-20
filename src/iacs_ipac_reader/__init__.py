@@ -11,4 +11,5 @@ from .aid_cv2_dnn import*
 from .image_processing import*
 from .ApplyRF import*
 from .background_program import*
+from . import art_rc
 
