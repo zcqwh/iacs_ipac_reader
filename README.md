@@ -5,7 +5,7 @@
 [![Python Version](https://img.shields.io/pypi/pyversions/iacs_ipac_reader.svg?color=green)](https://python.org)
 [![tests](https://github.com/zcqwh/iacs_ipac_reader/workflows/tests/badge.svg)](https://github.com/zcqwh/iacs_ipac_reader/actions)
 [![codecov](https://codecov.io/gh/zcqwh/iacs_ipac_reader/branch/main/graph/badge.svg)](https://codecov.io/gh/zcqwh/iacs_ipac_reader)
-[![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/iacs_ipac_reader)](https://napari-hub.org/plugins/iacs_ipac_reader)
+[![napari hub](https://img.shields.io/endpoint?url=[https://api.napari-hub.org/shields/iacs_ipac_reader](https://www.napari-hub.org/plugins/iacs-ipac-reader))](https://napari-hub.org/plugins/iacs_ipac_reader)
 
 A plugin used a convolutional neural network (CNN) to distinguish single platelets, platelet clusters, and white blood cells and performed classical image analysis for each subpopulation individually. Based on the derived single-cell features for each population, a Random Forest (RF) model was trained and used to classify COVID-19 associated thrombosis and non-COVID-19 associated thrombosis.
 
