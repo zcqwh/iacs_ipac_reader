@@ -1,6 +1,6 @@
 import napari
 from napari_plugin_engine import napari_hook_implementation
-from PyQt5 import QtCore, QtGui, QtWidgets
+from qtpy import QtCore, QtGui, QtWidgets
 
 import cv2, h5py, os, time, shutil, pickle
 import numpy as np
